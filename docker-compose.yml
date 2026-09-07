@@ -1,0 +1,161 @@
+services:
+    app:
+        build:
+            context: .
+            dockerfile: docker/php/Dockerfile
+            args:
+                # Keeps file ownership in the bind mount aligned with the host
+                # user, so storage/ stays writable from inside the container.
+                UID: ${UID:-1000}
+                GID: ${GID:-1000}
+        image: mini-order-management-api
+        container_name: moms-app
+        restart: unless-stopped
+        working_dir: /var/www/html
+        volumes:
+            - .:/var/www/html
+            - ./docker/php/php.ini:/usr/local/etc/php/conf.d/99-app.ini:ro
+        # Inside the network the services are reachable by name, so these
+        # override whatever host/port .env uses for running artisan on the host.
+        environment:
+            DB_HOST: mysql
+            DB_PORT: 3306
+            REDIS_HOST: redis
+            REDIS_PORT: 6379
+            MAIL_MAILER: smtp
+            MAIL_HOST: mailpit
+            MAIL_PORT: 1025
+        depends_on:
+            mysql:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            mailpit:
+                condition: service_started
+        networks:
+            - moms
+
+    nginx:
+        image: nginx:1.27-alpine
+        container_name: moms-nginx
+        restart: unless-stopped
+        ports:
+            - "${APP_PORT:-8000}:80"
+        volumes:
+            - .:/var/www/html
+            - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+        depends_on:
+            - app
+        networks:
+            - moms
+
+    # Processes the "orders" queue: order confirmation mails, stock sync, etc.
+    queue:
+        # Same image as app. Declaring the build here too (rather than only
+        # image:) stops Compose from trying to pull a local-only image first
+        # and printing an "access denied" error before the build runs.
+        build:
+            context: .
+            dockerfile: docker/php/Dockerfile
+            args:
+                UID: ${UID:-1000}
+                GID: ${GID:-1000}
+        image: mini-order-management-api
+        container_name: moms-queue
+        restart: unless-stopped
+        working_dir: /var/www/html
+        command: php artisan queue:work --queue=orders,default --tries=3 --backoff=5 --max-time=3600
+        volumes:
+            - .:/var/www/html
+        environment:
+            DB_HOST: mysql
+            DB_PORT: 3306
+            REDIS_HOST: redis
+            REDIS_PORT: 6379
+            MAIL_MAILER: smtp
+            MAIL_HOST: mailpit
+            MAIL_PORT: 1025
+        depends_on:
+            app:
+                condition: service_started
+            mysql:
+                condition: service_healthy
+            mailpit:
+                condition: service_started
+        networks:
+            - moms
+
+    mysql:
+        image: mysql:8.0
+        container_name: moms-mysql
+        restart: unless-stopped
+        ports:
+            # 3307 on the host so a locally installed MySQL on 3306 keeps working.
+            - "${DB_FORWARD_PORT:-3307}:3306"
+        environment:
+            MYSQL_DATABASE: ${DB_DATABASE:-mini_order_management}
+            MYSQL_USER: ${DB_USERNAME:-laravel}
+            MYSQL_PASSWORD: ${DB_PASSWORD:-password}
+            MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-password}
+        volumes:
+            - moms-mysql:/var/lib/mysql
+            - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+        healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${DB_ROOT_PASSWORD:-password}"]
+            interval: 5s
+            timeout: 5s
+            retries: 20
+        networks:
+            - moms
+
+    phpmyadmin:
+        image: phpmyadmin:5
+        container_name: moms-phpmyadmin
+        restart: unless-stopped
+        ports:
+            - "${PMA_PORT:-8080}:80"
+        environment:
+            PMA_HOST: mysql
+            PMA_PORT: 3306
+            UPLOAD_LIMIT: 64M
+        depends_on:
+            mysql:
+                condition: service_healthy
+        networks:
+            - moms
+
+    redis:
+        image: redis:7-alpine
+        container_name: moms-redis
+        restart: unless-stopped
+        ports:
+            - "${REDIS_FORWARD_PORT:-6380}:6379"
+        command: redis-server --appendonly yes
+        volumes:
+            - moms-redis:/data
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 5s
+            timeout: 5s
+            retries: 20
+        networks:
+            - moms
+
+    # Catches every mail the app sends. UI on http://localhost:8025
+    mailpit:
+        image: axllent/mailpit:latest
+        container_name: moms-mailpit
+        restart: unless-stopped
+        ports:
+            - "${MAILPIT_UI_PORT:-8025}:8025"
+            - "${MAILPIT_SMTP_PORT:-1025}:1025"
+        networks:
+            - moms
+
+volumes:
+    moms-mysql:
+    moms-redis:
+
+networks:
+    moms:
+        driver: bridge

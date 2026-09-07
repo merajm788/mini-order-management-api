@@ -1,0 +1,327 @@
+{
+    "info": {
+        "name": "Mini Order Management API",
+        "description": "Token-authenticated REST API for products and orders.\n\nRun **Auth → Login** first: its test script stores the returned token in the `token` collection variable, and every protected request picks it up automatically.\n\nSeeded credentials:\n- `demo@example.com` / `password123` (owns the seeded products)\n- `customer@example.com` / `password123`",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "auth": {
+        "type": "bearer",
+        "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+    },
+    "variable": [
+        { "key": "base_url", "value": "http://localhost:8000/api/v1", "type": "string" },
+        { "key": "token", "value": "", "type": "string" },
+        { "key": "product_id", "value": "1", "type": "string" },
+        { "key": "order_id", "value": "1", "type": "string" }
+    ],
+    "item": [
+        {
+            "name": "Auth",
+            "item": [
+                {
+                    "name": "Register",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                                    "const body = pm.response.json();",
+                                    "pm.test('returns a token', () => pm.expect(body.data.token).to.be.a('string'));",
+                                    "pm.collectionVariables.set('token', body.data.token);"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "auth": { "type": "noauth" },
+                        "method": "POST",
+                        "header": [
+                            { "key": "Accept", "value": "application/json" },
+                            { "key": "Content-Type", "value": "application/json" }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Alex Doe\",\n    \"email\": \"alex+{{$randomInt}}@example.com\",\n    \"password\": \"secret-pass-1\",\n    \"password_confirmation\": \"secret-pass-1\"\n}"
+                        },
+                        "url": { "raw": "{{base_url}}/register", "host": ["{{base_url}}"], "path": ["register"] },
+                        "description": "Creates an account and returns an access token. Rate limited to 5 requests per minute per IP."
+                    }
+                },
+                {
+                    "name": "Login",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                                    "const body = pm.response.json();",
+                                    "pm.test('returns a token', () => pm.expect(body.data.token).to.be.a('string'));",
+                                    "pm.collectionVariables.set('token', body.data.token);",
+                                    "console.log('Token stored in the collection variable.');"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "auth": { "type": "noauth" },
+                        "method": "POST",
+                        "header": [
+                            { "key": "Accept", "value": "application/json" },
+                            { "key": "Content-Type", "value": "application/json" }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"email\": \"customer@example.com\",\n    \"password\": \"password123\"\n}"
+                        },
+                        "url": { "raw": "{{base_url}}/login", "host": ["{{base_url}}"], "path": ["login"] },
+                        "description": "Run this first. The test script saves the token for every other request."
+                    }
+                },
+                {
+                    "name": "Current user",
+                    "request": {
+                        "method": "GET",
+                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/me", "host": ["{{base_url}}"], "path": ["me"] }
+                    }
+                },
+                {
+                    "name": "Logout",
+                    "request": {
+                        "method": "POST",
+                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/logout", "host": ["{{base_url}}"], "path": ["logout"] },
+                        "description": "Revokes only the token used for this request; other devices stay signed in."
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Products",
+            "item": [
+                {
+                    "name": "List products",
+                    "request": {
+                        "auth": { "type": "noauth" },
+                        "method": "GET",
+                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "url": {
+                            "raw": "{{base_url}}/products?per_page=15",
+                            "host": ["{{base_url}}"],
+                            "path": ["products"],
+                            "query": [{ "key": "per_page", "value": "15" }]
+                        },
+                        "description": "Public. Served from Redis when the cache is warm."
+                    }
+                },
+                {
+                    "name": "Search and filter products",
+                    "request": {
+                        "auth": { "type": "noauth" },
+                        "method": "GET",
+                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "url": {
+                            "raw": "{{base_url}}/products?search=keyboard&min_price=20&max_price=500&in_stock=1&sort_by=price&sort_direction=asc",
+                            "host": ["{{base_url}}"],
+                            "path": ["products"],
+                            "query": [
+                                { "key": "search", "value": "keyboard", "description": "Matches name, SKU or description" },
+                                { "key": "min_price", "value": "20" },
+                                { "key": "max_price", "value": "500" },
+                                { "key": "in_stock", "value": "1" },
+                                { "key": "sort_by", "value": "price", "description": "name | price | stock | created_at" },
+                                { "key": "sort_direction", "value": "asc" }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get single product",
+                    "request": {
+                        "auth": { "type": "noauth" },
+                        "method": "GET",
+                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "url": {
+                            "raw": "{{base_url}}/products/{{product_id}}",
+                            "host": ["{{base_url}}"],
+                            "path": ["products", "{{product_id}}"]
+                        }
+                    }
+                },
+                {
+                    "name": "Create product",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                                    "pm.collectionVariables.set('product_id', pm.response.json().data.id);"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            { "key": "Accept", "value": "application/json" },
+                            { "key": "Content-Type", "value": "application/json" }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Standing Desk\",\n    \"description\": \"Electric height adjustable desk.\",\n    \"price\": 499.99,\n    \"stock\": 12\n}"
+                        },
+                        "url": { "raw": "{{base_url}}/products", "host": ["{{base_url}}"], "path": ["products"] },
+                        "description": "The SKU is generated when omitted. The caller becomes the owner."
+                    }
+                },
+                {
+                    "name": "Update product",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            { "key": "Accept", "value": "application/json" },
+                            { "key": "Content-Type", "value": "application/json" }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"price\": 449.00,\n    \"stock\": 30\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/products/{{product_id}}",
+                            "host": ["{{base_url}}"],
+                            "path": ["products", "{{product_id}}"]
+                        },
+                        "description": "Owner only; anyone else receives 403."
+                    }
+                },
+                {
+                    "name": "Delete product",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "url": {
+                            "raw": "{{base_url}}/products/{{product_id}}",
+                            "host": ["{{base_url}}"],
+                            "path": ["products", "{{product_id}}"]
+                        },
+                        "description": "Soft delete, so historical order items keep their reference."
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Orders",
+            "item": [
+                {
+                    "name": "Place order",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                                    "const order = pm.response.json().data;",
+                                    "pm.test('total matches the line items', () => {",
+                                    "    const sum = order.items.reduce((t, i) => t + i.subtotal, 0);",
+                                    "    pm.expect(order.total_amount).to.be.closeTo(sum, 0.01);",
+                                    "});",
+                                    "pm.collectionVariables.set('order_id', order.id);"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            { "key": "Accept", "value": "application/json" },
+                            { "key": "Content-Type", "value": "application/json" }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"items\": [\n        { \"product_id\": 1, \"quantity\": 2 },\n        { \"product_id\": 2, \"quantity\": 1 }\n    ],\n    \"notes\": \"Please deliver after 6pm.\"\n}"
+                        },
+                        "url": { "raw": "{{base_url}}/orders", "host": ["{{base_url}}"], "path": ["orders"] },
+                        "description": "Checks stock, deducts it inside a locked transaction, calculates the total and queues the confirmation email. Rate limited to 10 requests per minute per user."
+                    }
+                },
+                {
+                    "name": "Place order — insufficient stock (422)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('422 Unprocessable', () => pm.response.to.have.status(422));",
+                                    "pm.test('reports the shortage', () => pm.expect(pm.response.json().errors.stock).to.be.an('array'));"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            { "key": "Accept", "value": "application/json" },
+                            { "key": "Content-Type", "value": "application/json" }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"items\": [\n        { \"product_id\": 4, \"quantity\": 999 }\n    ]\n}"
+                        },
+                        "url": { "raw": "{{base_url}}/orders", "host": ["{{base_url}}"], "path": ["orders"] },
+                        "description": "Demonstrates the shortage payload: product_id, product_name, requested and available for every affected line."
+                    }
+                },
+                {
+                    "name": "List my orders",
+                    "request": {
+                        "method": "GET",
+                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "url": {
+                            "raw": "{{base_url}}/orders?per_page=15",
+                            "host": ["{{base_url}}"],
+                            "path": ["orders"],
+                            "query": [
+                                { "key": "per_page", "value": "15" },
+                                { "key": "status", "value": "pending", "disabled": true, "description": "pending | processing | completed | cancelled" }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get order details",
+                    "request": {
+                        "method": "GET",
+                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "url": {
+                            "raw": "{{base_url}}/orders/{{order_id}}",
+                            "host": ["{{base_url}}"],
+                            "path": ["orders", "{{order_id}}"]
+                        },
+                        "description": "Scoped to the caller: another user's order returns 404, never 403."
+                    }
+                },
+                {
+                    "name": "Cancel order",
+                    "request": {
+                        "method": "POST",
+                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "url": {
+                            "raw": "{{base_url}}/orders/{{order_id}}/cancel",
+                            "host": ["{{base_url}}"],
+                            "path": ["orders", "{{order_id}}", "cancel"]
+                        },
+                        "description": "Restores the reserved stock. Only pending and processing orders can be cancelled."
+                    }
+                }
+            ]
+        }
+    ]
+}

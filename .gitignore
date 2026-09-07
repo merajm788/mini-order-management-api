@@ -1,0 +1,43 @@
+# Dependencies
+/vendor
+/node_modules
+
+# Environment
+.env
+.env.backup
+.env.production
+/auth.json
+
+# Database (the SQLite file is only a leftover from the default skeleton)
+/database/*.sqlite*
+
+# Build output
+/public/build
+/public/fonts-manifest.dev.json
+/public/hot
+/public/storage
+/storage/*.key
+/storage/pail
+
+# Logs, caches and test artefacts
+*.log
+.phpunit.result.cache
+/.phpunit.cache
+
+# Editors and tooling
+.phpactor.json
+/.codex
+/.cursor/
+/.idea
+/.nova
+/.vscode
+/.zed
+/AGENTS.md
+/CLAUDE.md
+_ide_helper.php
+
+# OS files
+.DS_Store
+Thumbs.db
+Homestead.json
+Homestead.yaml

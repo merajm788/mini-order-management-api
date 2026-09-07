@@ -1,0 +1,594 @@
+openapi: 3.0.3
+
+info:
+  title: Mini Order Management API
+  version: 1.0.0
+  description: |
+    REST API for a small order management system: token authentication,
+    product CRUD with search/filtering, and order placement with stock
+    checks, atomic stock deduction and asynchronous processing.
+
+    **Authentication** — every protected endpoint expects a Sanctum bearer
+    token obtained from `POST /register` or `POST /login`:
+
+        Authorization: Bearer 1|xxxxxxxxxxxxxxxxxxxx
+
+    **Response envelope** — every response, success or failure, has the same
+    shape: `success` (bool), `message` (string) and either `data` or `errors`.
+    Paginated endpoints add Laravel's `meta` and `links` blocks.
+
+    **Rate limits** — 60 req/min for general API traffic, 5 req/min for
+    `/login` and `/register` (per IP), 10 req/min for `POST /orders`
+    (per user). Exceeding a limit returns `429`.
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development
+
+tags:
+  - name: Authentication
+  - name: Products
+  - name: Orders
+
+paths:
+
+  /register:
+    post:
+      tags: [Authentication]
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, password_confirmation]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 255, example: Alex Doe }
+                email: { type: string, format: email, example: alex@example.com }
+                password: { type: string, format: password, minLength: 8, example: secret-pass-1 }
+                password_confirmation: { type: string, format: password, example: secret-pass-1 }
+                device_name: { type: string, example: iphone-15 }
+      responses:
+        '201':
+          description: Account created; the response carries the access token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSuccess' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /login:
+    post:
+      tags: [Authentication]
+      summary: Log in and receive an access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, example: customer@example.com }
+                password: { type: string, format: password, example: password123 }
+                device_name: { type: string, example: iphone-15 }
+      responses:
+        '200':
+          description: Authenticated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSuccess' }
+        '422':
+          description: Invalid credentials (identical response for an unknown email).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke the token used for this request
+      description: Other devices stay signed in.
+      responses:
+        '200':
+          description: Token revoked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessageResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /me:
+    get:
+      tags: [Authentication]
+      summary: Get the authenticated user
+      responses:
+        '200':
+          description: The current user.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /products:
+    get:
+      tags: [Products]
+      summary: List products
+      description: Public. Inactive products are excluded unless `is_active=0` is passed.
+      security: []
+      parameters:
+        - { name: search, in: query, schema: { type: string }, description: Matches name, SKU or description., example: keyboard }
+        - { name: min_price, in: query, schema: { type: number, format: float }, example: 20 }
+        - { name: max_price, in: query, schema: { type: number, format: float }, example: 200 }
+        - { name: in_stock, in: query, schema: { type: boolean }, description: '1 = stock > 0, 0 = out of stock.' }
+        - { name: is_active, in: query, schema: { type: boolean }, description: Defaults to active only. }
+        - { name: sort_by, in: query, schema: { type: string, enum: [name, price, stock, created_at], default: created_at } }
+        - { name: sort_direction, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 15 } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: A page of products. Served from Redis when warm.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductCollection' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+    post:
+      tags: [Products]
+      summary: Create a product
+      description: The authenticated user becomes the owner. A SKU is generated when omitted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, price, stock]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 255, example: Standing Desk }
+                sku: { type: string, maxLength: 100, example: STANDING-DESK-01 }
+                description: { type: string, maxLength: 5000 }
+                price: { type: number, format: float, minimum: 0, example: 499.99 }
+                stock: { type: integer, minimum: 0, example: 12 }
+                is_active: { type: boolean, default: true }
+      responses:
+        '201':
+          description: Product created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /products/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer }, example: 1 }
+
+    get:
+      tags: [Products]
+      summary: Get a single product
+      security: []
+      responses:
+        '200':
+          description: The product.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    put:
+      tags: [Products]
+      summary: Update a product
+      description: Only the owner may update. Every field is optional.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 2, maxLength: 255 }
+                sku: { type: string, maxLength: 100 }
+                description: { type: string, maxLength: 5000 }
+                price: { type: number, format: float, minimum: 0, example: 25.50 }
+                stock: { type: integer, minimum: 0, example: 99 }
+                is_active: { type: boolean }
+      responses:
+        '200':
+          description: Product updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+    patch:
+      tags: [Products]
+      summary: Partially update a product
+      description: Identical to PUT; every field is optional on both.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                price: { type: number, format: float, example: 19.99 }
+                stock: { type: integer, example: 5 }
+      responses:
+        '200':
+          description: Product updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      tags: [Products]
+      summary: Delete a product
+      description: Soft delete, so existing order items keep their reference.
+      responses:
+        '200':
+          description: Product deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessageResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: List the authenticated user's orders
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, processing, completed, cancelled] } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 15 } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: A page of the caller's own orders.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderCollection' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+    post:
+      tags: [Orders]
+      summary: Place an order
+      description: |
+        Runs inside a database transaction that locks the referenced products
+        with `SELECT ... FOR UPDATE`, so concurrent orders cannot oversell.
+
+        Stock and availability are checked, stock is deducted, the total is
+        calculated from the live prices, and the line items snapshot the name
+        and price at purchase time. If any line fails, the whole order is
+        rolled back.
+
+        Rate limited to 10 requests per minute per user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [product_id, quantity]
+                    properties:
+                      product_id: { type: integer, example: 1 }
+                      quantity: { type: integer, minimum: 1, maximum: 1000, example: 2 }
+                notes: { type: string, maxLength: 1000, example: Please deliver after 6pm. }
+      responses:
+        '201':
+          description: Order placed; a confirmation email is queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422':
+          description: Validation failed, stock is insufficient, or a product is unavailable.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/InsufficientStockError'
+                  - $ref: '#/components/schemas/UnavailableProductError'
+                  - $ref: '#/components/schemas/ErrorResponse'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /orders/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer }, example: 1 }
+
+    get:
+      tags: [Orders]
+      summary: Get order details
+      description: Scoped to the caller; another user's order returns 404, never 403.
+      responses:
+        '200':
+          description: The order with its line items.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /orders/{id}/cancel:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer }, example: 1 }
+
+    post:
+      tags: [Orders]
+      summary: Cancel an order and restore its stock
+      description: Only `pending` and `processing` orders can be cancelled.
+      responses:
+        '200':
+          description: Order cancelled; the reserved units are back in stock.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The order has reached a status that can no longer be cancelled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: A Sanctum personal access token from /register or /login.
+
+  schemas:
+
+    SuccessEnvelope:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string, example: OK }
+
+    MessageResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string, example: Product deleted successfully. }
+        data: { type: object, nullable: true, example: null }
+
+    ErrorResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string, example: The given data was invalid. }
+        errors:
+          type: object
+          additionalProperties: { type: array, items: { type: string } }
+          example: { email: ['The email field is required.'] }
+
+    InsufficientStockError:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string, example: One or more products do not have enough stock. }
+        errors:
+          type: object
+          properties:
+            stock:
+              type: array
+              description: Every shortage in the cart, so it can be fixed in one round trip.
+              items:
+                type: object
+                properties:
+                  product_id: { type: integer, example: 4 }
+                  product_name: { type: string, example: 27 Inch 4K Monitor }
+                  requested: { type: integer, example: 900 }
+                  available: { type: integer, example: 20 }
+
+    UnavailableProductError:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string, example: One or more products are unavailable for ordering. }
+        errors:
+          type: object
+          properties:
+            products:
+              type: array
+              items: { type: integer }
+              example: [11]
+
+    User:
+      type: object
+      properties:
+        id: { type: integer, example: 2 }
+        name: { type: string, example: Demo Customer }
+        email: { type: string, format: email, example: customer@example.com }
+        created_at: { type: string, format: date-time }
+
+    AuthSuccess:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string, example: Login successful. }
+        data:
+          type: object
+          properties:
+            user: { $ref: '#/components/schemas/User' }
+            token: { type: string, example: '1|ZNnaK4qgnQrkOcjsi4OnPzbSddri6HjV' }
+            token_type: { type: string, example: Bearer }
+
+    Product:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        name: { type: string, example: Wireless Mouse }
+        sku: { type: string, example: WIRELESS-MOUSE }
+        description: { type: string, nullable: true }
+        price: { type: number, format: float, example: 24.99 }
+        stock: { type: integer, example: 148 }
+        in_stock: { type: boolean, example: true }
+        is_active: { type: boolean, example: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProductResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string, example: Product retrieved successfully. }
+        data: { $ref: '#/components/schemas/Product' }
+
+    ProductCollection:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string, example: Products retrieved successfully. }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Product' }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
+        links: { $ref: '#/components/schemas/PaginationLinks' }
+
+    OrderItem:
+      type: object
+      properties:
+        id: { type: integer, example: 16 }
+        product_id: { type: integer, example: 1 }
+        product_name:
+          type: string
+          description: The name at purchase time, not the product's current name.
+          example: Wireless Mouse
+        unit_price: { type: number, format: float, example: 24.99 }
+        quantity: { type: integer, example: 2 }
+        subtotal: { type: number, format: float, example: 49.98 }
+
+    Order:
+      type: object
+      properties:
+        id: { type: integer, example: 6 }
+        order_number: { type: string, example: ORD-20260907-B67F1C }
+        status: { type: string, enum: [pending, processing, completed, cancelled], example: pending }
+        total_amount: { type: number, format: float, example: 139.48 }
+        notes: { type: string, nullable: true }
+        items_count:
+          type: integer
+          description: Present on the listing endpoint only.
+          example: 2
+        items:
+          type: array
+          description: Present on the detail endpoint and on create.
+          items: { $ref: '#/components/schemas/OrderItem' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    OrderResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string, example: Order placed successfully. }
+        data: { $ref: '#/components/schemas/Order' }
+
+    OrderCollection:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string, example: Orders retrieved successfully. }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Order' }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
+        links: { $ref: '#/components/schemas/PaginationLinks' }
+
+    PaginationMeta:
+      type: object
+      properties:
+        current_page: { type: integer, example: 1 }
+        from: { type: integer, nullable: true, example: 1 }
+        last_page: { type: integer, example: 2 }
+        per_page: { type: integer, example: 15 }
+        to: { type: integer, nullable: true, example: 15 }
+        total: { type: integer, example: 23 }
+
+    PaginationLinks:
+      type: object
+      properties:
+        first: { type: string, nullable: true }
+        last: { type: string, nullable: true }
+        prev: { type: string, nullable: true }
+        next: { type: string, nullable: true }
+
+  responses:
+
+    Unauthenticated:
+      description: No token was supplied, or it is invalid or expired.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              message: { type: string, example: Unauthenticated. }
+
+    Forbidden:
+      description: Authenticated, but not the owner of this resource.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              message: { type: string, example: This action is unauthorized. }
+
+    NotFound:
+      description: The resource does not exist (or is not visible to the caller).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              message: { type: string, example: Product not found. }
+
+    ValidationError:
+      description: The request body or query string failed validation.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    TooManyRequests:
+      description: A rate limit was exceeded.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              message: { type: string, example: Too many requests. Please slow down. }
+
+security:
+  - bearerAuth: []
