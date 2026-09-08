@@ -30,14 +30,23 @@ cd mini-order-management-api
 cp .env.example .env
 
 docker compose up -d --build
+docker compose exec app composer install
 docker compose exec app php artisan key:generate
 docker compose exec app php artisan migrate --seed
 ```
 
-That's it — no `.env` editing needed. The compose file passes the in-network
-hostnames (`mysql`, `redis`, `mailpit`) to the containers, while the `.env`
-values stay pointed at the published host ports so `php artisan` also works from
-your own shell.
+The `composer install` step looks redundant next to `--build`, and isn't. The
+image does install dependencies, but the compose file bind mounts your project
+directory over `/var/www/html` so that code edits show up without a rebuild —
+and that mount hides the image's `vendor/`. A fresh clone has no `vendor/` of
+its own (it's gitignored), so the container sees an empty directory until you
+install into the mount. Running it there also leaves `vendor/` on the host,
+which is what your editor and `./vendor/bin/pint` need.
+
+Nothing else needs editing. The compose file passes the in-network hostnames
+(`mysql`, `redis`, `mailpit`) to the containers, while the `.env` values stay
+pointed at the published host ports so `php artisan` also works from your own
+shell.
 
 If your account isn't uid/gid 1000, build with
 `UID=$(id -u) GID=$(id -g) docker compose up -d --build` so the container can
