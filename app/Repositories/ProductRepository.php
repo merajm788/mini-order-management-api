@@ -4,18 +4,18 @@ namespace App\Repositories;
 
 use App\DataTransferObjects\ProductFilters;
 use App\Models\Product;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Cache;
 
 /**
- * All product database access, with a Redis cache in front of the two read
- * paths (listing and single product).
+ * Product database access, with a Redis cache in front of the two read paths.
  *
- * Every cache key carries a version number. Instead of deleting keys one by one
- * (impossible: there is one per filter combination), a write bumps the version,
- * which orphans all of the old keys at once.
+ * Cache keys carry a version number. A listing has one key per filter
+ * combination, so a write cannot enumerate what to delete — it bumps the
+ * version instead, orphaning every old key at once.
  */
 class ProductRepository
 {
@@ -23,32 +23,47 @@ class ProductRepository
 
     public function search(ProductFilters $filters): LengthAwarePaginator
     {
-        return Cache::remember(
+        // Cache plain rows, never the paginator or models: they hold a database
+        // connection and come back from Redis as __PHP_Incomplete_Class.
+        ['rows' => $rows, 'total' => $total] = Cache::remember(
             $this->versionedCacheKey($filters->toCacheKey()),
             config('cache.product_ttl'),
-            fn () => $this->buildFilteredQuery($filters)->paginate($filters->perPage, page: $filters->page),
+            function () use ($filters): array {
+                $page = $this->buildFilteredQuery($filters)->paginate($filters->perPage, page: $filters->page);
+
+                return ['rows' => $page->getCollection()->toArray(), 'total' => $page->total()];
+            },
+        );
+
+        return new LengthAwarePaginator(
+            Product::hydrate($rows),
+            $total,
+            $filters->perPage,
+            $filters->page,
+            ['path' => Paginator::resolveCurrentPath()],
         );
     }
 
     public function find(int $id): ?Product
     {
-        return Cache::remember(
+        $row = Cache::remember(
             $this->versionedCacheKey("product:{$id}"),
             config('cache.product_ttl'),
-            fn () => Product::query()->find($id),
+            fn () => Product::query()->find($id)?->attributesToArray(),
         );
+
+        return $row ? Product::hydrate([$row])->first() : null;
     }
 
     /**
      * Locks the given products so two orders cannot read the same stock at
-     * once. Must run inside a transaction.
+     * once. Must run inside a transaction, and is never cached.
      *
      * @param  array<int, int>  $ids
      * @return Collection<int, Product>
      */
     public function lockForOrdering(array $ids): Collection
     {
-        // Never cached: the whole point is to read the live row.
         return Product::query()->whereIn('id', $ids)->lockForUpdate()->get();
     }
 
@@ -104,7 +119,6 @@ class ProductRepository
         Cache::increment(self::VERSION_KEY);
     }
 
-    /** Prefixes a key with the current version, so a bump orphans the old one. */
     private function versionedCacheKey(string $key): string
     {
         return 'v'.Cache::get(self::VERSION_KEY, 1).':'.$key;

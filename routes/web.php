@@ -22,5 +22,9 @@ Route::get('/docs/openapi.yaml', function () {
 
     abort_unless(file_exists($path), 404);
 
-    return Response::file($path, ['Content-Type' => 'application/yaml']);
+    // no-store, or the browser keeps serving a stale spec after the file changes.
+    return Response::file($path, [
+        'Content-Type' => 'application/yaml',
+        'Cache-Control' => 'no-store',
+    ]);
 })->name('docs.openapi');

@@ -186,7 +186,7 @@ Base URL `http://localhost:8000/api/v1`.
 | `GET` | `/products` | — | List, with search/filter/sort/pagination |
 | `GET` | `/products/{id}` | — | One product |
 | `POST` | `/products` | yes | Create; the caller becomes the owner |
-| `PUT` `PATCH` | `/products/{id}` | yes | Update — owner only |
+| `PUT` | `/products/{id}` | yes | Update — owner only, every field optional |
 | `DELETE` | `/products/{id}` | yes | Soft delete — owner only |
 
 Query parameters for the listing:
@@ -195,7 +195,7 @@ Query parameters for the listing:
 | --- | --- | --- |
 | `search` | string | Matches name, SKU or description |
 | `min_price` `max_price` | number | Inclusive range |
-| `in_stock` | bool | `1` = has stock, `0` = out of stock |
+| `in_stock` | bool | `true`/`1` = has stock, `false`/`0` = out of stock |
 | `is_active` | bool | Defaults to active only |
 | `sort_by` | enum | `name`, `price`, `stock`, `created_at` |
 | `sort_direction` | enum | `asc` or `desc` (default `desc`) |
@@ -574,7 +574,7 @@ php artisan test tests/Feature/Api/OrderTest.php   # one file
 ```
 
 ```
-Tests:    80 passed (232 assertions)
+Tests:    83 passed (238 assertions)
 Duration: ~1.4s
 ```
 

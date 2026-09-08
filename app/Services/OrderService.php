@@ -43,13 +43,13 @@ class OrderService
 
             $this->ensureProductsCanBeOrdered($products, $quantities);
 
-            $lineItems = $this->buildOrderItems($products, $quantities);
+            [$lineItems, $total] = $this->buildOrderItems($products, $quantities);
 
             $order = $this->orders->create([
                 'user_id' => $user->id,
                 'order_number' => Order::generateNumber(),
                 'status' => OrderStatus::Pending,
-                'total_amount' => $this->calculateTotal($lineItems),
+                'total_amount' => $total,
                 'notes' => $notes,
             ]);
 
@@ -131,18 +131,21 @@ class OrderService
     }
 
     /**
-     * Turns the cart into line-item rows, each priced at the live unit price.
+     * Builds the line items and their total. Money goes through bcmath because
+     * floats drift once a cart gets large.
      *
      * @param  Collection<int, Product>  $products
      * @param  array<int, int>  $quantities
-     * @return array<int, array<string, mixed>>
+     * @return array{0: array<int, array<string, mixed>>, 1: string}
      */
     private function buildOrderItems(Collection $products, array $quantities): array
     {
         $items = [];
+        $total = '0.00';
 
         foreach ($quantities as $productId => $quantity) {
             $product = $products->get($productId);
+            $subtotal = bcmul((string) $product->price, (string) $quantity, 2);
 
             $items[] = [
                 'product_id' => $product->id,
@@ -150,24 +153,12 @@ class OrderService
                 'product_name' => $product->name,
                 'unit_price' => $product->price,
                 'quantity' => $quantity,
-                'subtotal' => bcmul((string) $product->price, (string) $quantity, 2),
+                'subtotal' => $subtotal,
             ];
+
+            $total = bcadd($total, $subtotal, 2);
         }
 
-        return $items;
-    }
-
-    /**
-     * Adds the subtotals with bcmath: floats would drift on a large cart.
-     *
-     * @param  array<int, array<string, mixed>>  $items
-     */
-    private function calculateTotal(array $items): string
-    {
-        return array_reduce(
-            $items,
-            fn (string $total, array $item) => bcadd($total, $item['subtotal'], 2),
-            '0.00',
-        );
+        return [$items, $total];
     }
 }

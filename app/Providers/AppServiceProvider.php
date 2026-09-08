@@ -23,7 +23,6 @@ class AppServiceProvider extends ServiceProvider
 
     private function configureRateLimiting(): void
     {
-        // General traffic: per token, falling back to IP for guests.
         RateLimiter::for('api', fn (Request $request) => Limit::perMinute(config('api.rate_limits.api'))
             ->by($request->user()?->id ?: $request->ip()));
 
@@ -36,7 +35,6 @@ class AppServiceProvider extends ServiceProvider
                 status: Response::HTTP_TOO_MANY_REQUESTS,
             )));
 
-        // Placing an order writes rows and locks products, so keep it modest.
         RateLimiter::for('orders', fn (Request $request) => Limit::perMinute(config('api.rate_limits.orders'))
             ->by($request->user()?->id ?: $request->ip()));
     }

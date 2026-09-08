@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Models\User;
 use App\Repositories\ProductRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -48,6 +49,24 @@ class ProductCacheTest extends TestCase
         $this->repository->search($filters);
 
         $this->assertSame(0, $queries);
+    }
+
+    #[Test]
+    public function what_gets_cached_survives_serialisation(): void
+    {
+        // The array store keeps objects in memory, so it never exercises
+        // serialisation. Redis does, and a cached paginator or Eloquent model
+        // comes back from it as __PHP_Incomplete_Class.
+        Product::factory()->count(2)->for($this->user)->create();
+
+        $this->repository->search(new ProductFilters);
+
+        $key = collect(Cache::getStore()->all())->keys()
+            ->first(fn (string $k) => str_contains($k, 'products:'));
+        $cached = Cache::get($key);
+
+        $this->assertEquals($cached, unserialize(serialize($cached)));
+        $this->assertIsArray($cached['rows'][0]);
     }
 
     #[Test]

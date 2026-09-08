@@ -16,11 +16,14 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.17.14/swagger-ui-bundle.min.js"></script>
     <script>
         window.ui = SwaggerUIBundle({
-            url: '{{ route('docs.openapi') }}',
+            {{-- The query string changes whenever the spec does, so an edited
+                 spec is never served from the browser cache. --}}
+            url: '{{ route('docs.openapi') }}?v={{ filemtime(base_path('docs/openapi.yaml')) }}',
             dom_id: '#swagger-ui',
             deepLinking: true,
             persistAuthorization: true,
             tryItOutEnabled: true,
+            defaultModelsExpandDepth: -1,
             presets: [SwaggerUIBundle.presets.apis],
         });
     </script>

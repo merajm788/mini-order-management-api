@@ -31,6 +31,45 @@ class AuthTest extends TestCase
     }
 
     #[Test]
+    public function registering_with_a_device_name_names_the_token(): void
+    {
+        // device_name is validated but belongs to the token, not the user row,
+        // so it must not reach the model as a mass-assigned attribute.
+        $this->postJson('/api/v1/register', [
+            'name' => 'Alex Doe',
+            'email' => 'alex@example.com',
+            'password' => 'secret-pass-1',
+            'password_confirmation' => 'secret-pass-1',
+            'device_name' => 'iphone-14-pro-max',
+        ])->assertCreated();
+
+        $this->assertSame(
+            'iphone-14-pro-max',
+            User::firstWhere('email', 'alex@example.com')->tokens()->value('name'),
+        );
+    }
+
+    #[Test]
+    public function logging_in_with_a_device_name_names_the_token(): void
+    {
+        User::factory()->create([
+            'email' => 'user@example.com',
+            'password' => 'correct-password',
+        ]);
+
+        $this->postJson('/api/v1/login', [
+            'email' => 'user@example.com',
+            'password' => 'correct-password',
+            'device_name' => 'macbook-pro',
+        ])->assertOk();
+
+        $this->assertSame(
+            'macbook-pro',
+            User::firstWhere('email', 'user@example.com')->tokens()->value('name'),
+        );
+    }
+
+    #[Test]
     public function registration_rejects_a_duplicate_email(): void
     {
         User::factory()->create(['email' => 'taken@example.com']);
