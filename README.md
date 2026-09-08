@@ -1,26 +1,25 @@
 # Mini Order Management API
 
 A REST API where users register, list products for sale, and place orders
-against each other's listings. Built with Laravel 13 on PHP 8.4 and MySQL 8.
+against each other's listings. Built with Laravel 13, PHP 8.4 and MySQL 8.
 
-The interesting parts are the order placement path (row locking so stock can't
-be oversold), the Redis cache in front of the product catalogue, and the way
-cache invalidation is handled without relying on cache tags.
+Placing an order checks stock, deducts it inside a locked transaction so it
+cannot be oversold, calculates the total, saves the line items, and queues a
+confirmation email.
 
 ## Contents
 
-- [Running it](#running-it)
-- [What you get](#what-you-get)
+- [Setup](#setup)
+- [URLs](#urls)
+- [Seeded accounts](#seeded-accounts)
 - [API endpoints](#api-endpoints)
 - [Response format](#response-format)
-- [How an order is placed](#how-an-order-is-placed)
 - [R&D features](#rd-features)
 - [Architecture](#architecture)
 - [Database](#database)
 - [Tests](#tests)
-- [Decisions and trade-offs](#decisions-and-trade-offs)
 
-## Running it
+## Setup
 
 ### With Docker
 
@@ -35,10 +34,10 @@ docker compose exec app php artisan key:generate
 docker compose exec app php artisan migrate --seed
 ```
 
-You don't need to edit `.env`. The compose file passes the in-network hostnames
-(`mysql`, `redis`, `mailpit`) to the containers that need them, while the
-`.env` values stay pointed at the published host ports so `php artisan` also
-works from your own shell.
+That's it — no `.env` editing needed. The compose file passes the in-network
+hostnames (`mysql`, `redis`, `mailpit`) to the containers, while the `.env`
+values stay pointed at the published host ports so `php artisan` also works from
+your own shell.
 
 If your account isn't uid/gid 1000, build with
 `UID=$(id -u) GID=$(id -g) docker compose up -d --build` so the container can
@@ -75,100 +74,93 @@ php artisan serve                                # terminal 1
 php artisan queue:work --queue=orders,default    # terminal 2
 ```
 
-### Middle option
+#### Somewhere for the emails to go
 
-The way this was actually developed: MySQL and Redis in containers, PHP on the
-host. Fastest to iterate on, and the `.env.example` ports are already set for it.
+Mailpit is a container, so without Docker nothing is listening on the SMTP port
+and sending an order confirmation fails. Pick one of these.
+
+**Install Mailpit natively** — keeps the web UI at http://localhost:8025 and
+needs no `.env` change, since it uses the same 8025/1025 ports:
+
+```bash
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/axllent/mailpit/develop/install.sh)"
+mailpit
+```
+
+Other platforms: `brew install mailpit` on macOS, or grab a binary from
+[github.com/axllent/mailpit/releases](https://github.com/axllent/mailpit/releases).
+
+**Run only that container**, if Docker is available but you want the rest on
+the host:
+
+```bash
+docker compose up -d mailpit
+```
+
+**Write to the log instead**, with no mail server at all. Set `MAIL_MAILER=log`
+in `.env` and the full email lands in the log file:
+
+```bash
+tail -f storage/logs/laravel.log
+```
+
+### MySQL and Redis in Docker, PHP on the host
+
+Fastest for development, and the `.env.example` ports are already set for it:
 
 ```bash
 docker compose up -d mysql redis mailpit
 php artisan migrate --seed
 php artisan serve
+php artisan queue:work --queue=orders,default    # second terminal
 ```
 
-## What you get
+## URLs
 
-| | URL |
+| | |
 | --- | --- |
 | API | http://localhost:8000/api/v1 |
 | Swagger UI | http://localhost:8000/docs |
 | OpenAPI spec | http://localhost:8000/docs/openapi.yaml |
-| Mailpit — catches every outgoing email | http://localhost:8025 |
+| Mailpit — every outgoing email lands here | http://localhost:8025 |
 | phpMyAdmin | http://localhost:8080 |
 | MySQL | `localhost:3307`, user `laravel`, password `password` |
 | Redis | `localhost:6380` |
 
-MySQL and Redis are published on 3307 and 6380 rather than their defaults, so
-they don't collide with anything already running on the host. That also means a
-phpMyAdmin installed on your machine won't see this database — it talks to 3306.
-Use the containerised one at port 8080 instead, or point a GUI client at 3307.
+MySQL and Redis use 3307 and 6380 rather than their defaults so they don't
+collide with anything already on the host. A phpMyAdmin installed on your
+machine talks to 3306 and won't see this database — use the containerised one at
+port 8080, or point a GUI client at 3307.
 
-Swagger UI is loaded from a CDN and pointed at the checked-in
-[`docs/openapi.yaml`](docs/openapi.yaml) — no documentation package, no build
-step. You can send authenticated requests straight from that page: hit
-**Authorize** and paste a token from `POST /login`.
+**Swagger UI** is served from a CDN against the checked-in
+[`docs/openapi.yaml`](docs/openapi.yaml). You can send authenticated requests
+from that page: hit **Authorize** and paste a token from `POST /login`.
 
-There's also a Postman collection at
-[`docs/postman_collection.json`](docs/postman_collection.json) with all 15
-requests. Run **Auth → Login** first and its test script stores the token for
-everything else. It includes a deliberate insufficient-stock request so you can
-see the error payload, and the order requests assert that the total matches the
-sum of its line items.
+**Postman**: import [`docs/postman_collection.json`](docs/postman_collection.json).
+Run **Auth → Login** first — its test script stores the token, and every other
+request picks it up.
 
-### Mailpit
+**Mailpit** and **phpMyAdmin** come from containers, so those two URLs only work
+when Docker is running. Mailpit catches order confirmations, which arrive a
+second or two after an order is placed — the `queue` container runs the worker
+already; on the host, start one yourself with
+`php artisan queue:work --queue=orders,default`.
 
-Order confirmations are sent from a queued job, so they land in Mailpit a second
-or two after you place an order. Open http://localhost:8025 and you'll see the
-message with its line-item table and total.
+## Seeded accounts
 
-Under Docker the `queue` container already runs `php artisan queue:work`, so
-this happens on its own. Running on the host, start a worker yourself:
-
-```bash
-php artisan queue:work --queue=orders,default
-```
-
-### Looking at the data
-
-phpMyAdmin at http://localhost:8080 — log in as `laravel` / `password`, or
-`root` / `password` if you want to see both schemas.
-
-From the terminal, either straight into MySQL:
-
-```bash
-docker compose exec mysql mysql -u laravel -ppassword mini_order_management
-```
-
-or through Tinker, which is nicer when you want the relationships:
-
-```bash
-docker compose exec app php artisan tinker
-```
-
-```php
-Product::where('stock', 0)->get(['id', 'name']);
-Order::with('items')->find(1);
-User::firstWhere('email', 'demo@example.com')->products()->count();
-```
-
-Worth doing once: open an order's `order_items` rows and compare `product_name`
-and `unit_price` against the current `products` row. They're snapshots, so
-renaming or repricing a product leaves old invoices alone.
-
-### Seeded accounts
-
-| Email | Password | What they have |
+| Email | Password | |
 | --- | --- | --- |
 | `demo@example.com` | `password123` | Owns the 11 hand-written products |
 | `customer@example.com` | `password123` | Has 5 sample orders |
 
-Seeding creates 10 users, 23 products and 5 orders in total. The catalogue
-deliberately includes one out-of-stock product and one inactive one, so the
-filters and the rejection paths have something to work against.
+Seeding creates 10 users, 23 products and 5 orders. The catalogue includes one
+out-of-stock and one inactive product so the filters and rejection paths have
+something to work against.
 
 ## API endpoints
 
-Base URL `http://localhost:8000/api/v1`.
+Base URL `http://localhost:8000/api/v1`. Protected endpoints expect
+`Authorization: Bearer <token>`.
 
 ### Auth
 
@@ -176,8 +168,13 @@ Base URL `http://localhost:8000/api/v1`.
 | --- | --- | :---: | --- |
 | `POST` | `/register` | — | Create an account, get a token back |
 | `POST` | `/login` | — | Exchange credentials for a token |
-| `POST` | `/logout` | yes | Revoke only the token used for this request |
+| `POST` | `/logout` | yes | Revoke the token used for this request |
 | `GET` | `/me` | yes | The current user |
+
+`register` takes `name`, `email`, `password`, `password_confirmation` and an
+optional `device_name`, which names the token so a user can revoke one device
+without signing out everywhere. `login` takes `email`, `password` and the same
+optional `device_name`.
 
 ### Products
 
@@ -189,18 +186,25 @@ Base URL `http://localhost:8000/api/v1`.
 | `PUT` | `/products/{id}` | yes | Update — owner only, every field optional |
 | `DELETE` | `/products/{id}` | yes | Soft delete — owner only |
 
+Create takes `name`, `price` and `stock`, plus optional `sku` (generated when
+omitted), `description` and `is_active`.
+
 Query parameters for the listing:
 
 | Parameter | | |
 | --- | --- | --- |
 | `search` | string | Matches name, SKU or description |
 | `min_price` `max_price` | number | Inclusive range |
-| `in_stock` | bool | `true`/`1` = has stock, `false`/`0` = out of stock |
+| `in_stock` | bool | `true`/`1` = in stock, `false`/`0` = out of stock |
 | `is_active` | bool | Defaults to active only |
 | `sort_by` | enum | `name`, `price`, `stock`, `created_at` |
 | `sort_direction` | enum | `asc` or `desc` (default `desc`) |
 | `per_page` | int | 1–100, default 15 |
 | `page` | int | Default 1 |
+
+```
+GET /products?search=keyboard&min_price=20&max_price=500&in_stock=true&sort_by=price&sort_direction=asc
+```
 
 ### Orders
 
@@ -209,9 +213,12 @@ Query parameters for the listing:
 | `POST` | `/orders` | yes | Place an order |
 | `GET` | `/orders` | yes | Your orders; filter with `?status=` |
 | `GET` | `/orders/{id}` | yes | One order with its line items |
-| `POST` | `/orders/{id}/cancel` | yes | Cancel and put the stock back |
+| `POST` | `/orders/{id}/cancel` | yes | Cancel and return the stock |
 
-### Placing an order
+Statuses are `pending`, `processing`, `completed` and `cancelled`. Only
+`pending` and `processing` orders can be cancelled.
+
+### Example: placing an order
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/login \
@@ -230,7 +237,7 @@ curl -s -X POST http://localhost:8000/api/v1/orders \
 {
     "data": {
         "id": 6,
-        "order_number": "ORD-20260907-B67F1C",
+        "order_number": "ORD-20260908-B67F1C",
         "status": "pending",
         "total_amount": 139.48,
         "notes": "Please deliver after 6pm.",
@@ -246,10 +253,25 @@ curl -s -X POST http://localhost:8000/api/v1/orders \
 }
 ```
 
+Ordering more than the available stock returns `422` and names every shortage in
+one response, so a client can fix the whole cart in one round trip:
+
+```json
+{
+    "success": false,
+    "message": "One or more products do not have enough stock.",
+    "errors": {
+        "stock": [
+            { "product_id": 4, "product_name": "27 Inch 4K Monitor",
+              "requested": 900, "available": 25 }
+        ]
+    }
+}
+```
+
 ## Response format
 
-Everything comes back in the same envelope, so a client only writes one
-response handler.
+Every response uses the same envelope, so a client writes one response handler.
 
 ```json
 { "success": true, "message": "Product retrieved successfully.", "data": {} }
@@ -272,145 +294,23 @@ Paginated endpoints keep Laravel's `meta` and `links` blocks alongside it.
 | 422 | Validation failed, insufficient stock, or unavailable product |
 | 429 | Rate limited |
 
-Framework exceptions are converted in `bootstrap/app.php`, so no controller
-carries a `try/catch` for them.
-
-## How an order is placed
-
-`OrderService::placeOrder()` does the four things the brief asks for, plus the
-locking that makes them safe under concurrency.
-
-```php
-$order = DB::transaction(function () use ($user, $quantities, $notes): Order {
-    $ids = array_keys($quantities);
-    sort($ids);                                        // deadlock avoidance
-
-    $products = $this->products->lockForOrdering($ids) // SELECT ... FOR UPDATE
-        ->keyBy('id');
-
-    $this->ensureProductsCanBeOrdered($products, $quantities);   // 1. checks
-
-    $lineItems = $this->buildOrderItems($products, $quantities);
-
-    $order = $this->orders->create([
-        // ...
-        'total_amount' => $this->calculateTotal($lineItems),     // 3. total
-    ]);
-
-    $this->orders->addItems($order, $lineItems);                 // 4. items
-
-    foreach ($quantities as $productId => $quantity) {
-        $this->products->reduceStock($products[$productId], $quantity);  // 2.
-    }
-
-    return $order;
-});
-
-ProcessOrder::dispatch($order->id)->afterCommit();
-```
-
-### The overselling problem
-
-The obvious version has a race:
-
-```php
-if ($product->stock >= $qty) {   // two requests can both get past here
-    $product->decrement('stock', $qty);
-}
-```
-
-Two simultaneous requests for the last item both read `stock = 1`, both pass,
-and stock ends up at `-1`.
-
-`SELECT ... FOR UPDATE` inside a transaction fixes it. The first request locks
-the rows; the second blocks until the first commits, then re-reads the real
-value and fails properly. Products are locked in sorted id order so two carts
-holding the same products can't deadlock each other.
-
-### The rest of it
-
-| | |
-| --- | --- |
-| Atomicity | One bad line rolls back the whole order — no partial writes |
-| Money | `bcadd`/`bcmul` over `DECIMAL(10,2)`; floats drift on large carts |
-| History | Line items snapshot `product_name` and `unit_price`, so renaming or repricing a product never rewrites a past invoice |
-| Errors | Every shortage is returned at once, so a client can fix the whole cart in one round trip |
-| Jobs | `->afterCommit()` means the worker can't pick up an order that later rolled back |
-
-A rejected order tells you exactly what went wrong:
-
-```json
-{
-    "success": false,
-    "message": "One or more products do not have enough stock.",
-    "errors": {
-        "stock": [
-            { "product_id": 4, "product_name": "27 Inch 4K Monitor",
-              "requested": 900, "available": 20 }
-        ]
-    }
-}
-```
-
 ## R&D features
 
 ### Redis caching for products
 
-In `app/Repositories/ProductRepository.php`. Both read paths — the paginated
-listing and single-product lookups — are read-through caches:
+`app/Repositories/ProductRepository.php`. Both read paths — the paginated
+listing and single-product lookups — are read-through caches, with the TTL in
+`PRODUCT_CACHE_TTL` (default 600s).
 
-```php
-public function search(ProductFilters $filters): LengthAwarePaginator
-{
-    return Cache::remember(
-        $this->versionedCacheKey($filters->toCacheKey()),
-        config('cache.product_ttl'),
-        fn () => $this->buildFilteredQuery($filters)->paginate($filters->perPage, page: $filters->page),
-    );
-}
-```
+A listing has one cache key per filter combination, so a write cannot enumerate
+what to delete. Redis tags would solve that but only work on Redis and
+Memcached, so every key carries a version number instead; a write increments it
+and orphans all the old keys at once. Every write path does this, including the
+stock reduction from an order, so a customer never sees stock that isn't there.
 
-`ProductFilters::toCacheKey()` hashes the filter values, so `?search=x&min_price=5`
-and `?min_price=5&search=x` share one entry.
+### API rate limiting
 
-Invalidation was the interesting part. A listing produces one cache key per
-filter combination, so a write can't enumerate what to delete. Redis tags solve
-that, but `Cache::tags()` throws on the `array` and `database` stores, which
-would make the test suite behave differently from production. So every key
-carries a version number instead:
-
-```php
-private function versionedCacheKey(string $key): string
-{
-    return 'v'.Cache::get(self::VERSION_KEY, 1).':'.$key;
-}
-
-public function clearCache(): void
-{
-    Cache::add(self::VERSION_KEY, 1);   // must exist before incrementing
-    Cache::increment(self::VERSION_KEY);
-}
-```
-
-Bumping the version orphans every previous entry in O(1) and they expire on
-their own TTL. Every write path calls `clearCache()`, including the stock
-reduction from an order — so a customer never sees stock that isn't there.
-`ProductCacheTest` asserts exactly that.
-
-That `Cache::add()` before `increment()` matters more than it looks. On a cold
-cache `increment()` returns `false` without storing anything, which pins the
-version at its default and silently disables invalidation forever. The tests
-caught it; manual clicking around didn't.
-
-TTL is `PRODUCT_CACHE_TTL`, default 600s. The `FOR UPDATE` reads during checkout
-deliberately bypass the cache — the whole point there is to read the live row.
-
-### Rate limiting
-
-Registered in `AppServiceProvider::configureRateLimiting()`, attached in
-`bootstrap/app.php` and `routes/api.php`.
-
-One blanket limit is the wrong shape for this API, so there are three:
+Three limiters, registered in `AppServiceProvider::configureRateLimiting()`:
 
 | Limiter | Default | Keyed by | Applies to |
 | --- | --- | --- | --- |
@@ -418,15 +318,10 @@ One blanket limit is the wrong shape for this API, so there are three:
 | `auth` | 5/min | IP | `/login`, `/register` |
 | `orders` | 10/min | user id, else IP | `POST /orders` |
 
-`auth` is keyed by IP because a brute-force attacker doesn't have a token yet.
-The other two prefer the user id so that colleagues behind one office IP don't
-throttle each other. `orders` is the tightest because it writes rows and takes
-row locks.
-
-All three are configurable — `RATE_LIMIT_API`, `RATE_LIMIT_AUTH`,
-`RATE_LIMIT_ORDERS`. `RateLimitTest` covers that they fire, that they're tracked
-per user rather than globally, and that browsing products isn't affected by the
-auth limiter.
+`auth` is keyed by IP because a brute-force attacker has no token yet. The other
+two prefer the user id so colleagues behind one office IP don't throttle each
+other. All three are configurable: `RATE_LIMIT_API`, `RATE_LIMIT_AUTH`,
+`RATE_LIMIT_ORDERS`.
 
 ### Queued order processing
 
@@ -434,45 +329,29 @@ auth limiter.
 commits; the confirmation email and the `pending → processing` transition run on
 the `orders` queue backed by Redis.
 
-- Only the order id is serialised, not the model, so the worker reads the
-  committed row rather than a stale copy.
-- `->afterCommit()` keeps a worker from picking up an order whose transaction
-  later rolled back.
-- `WithoutOverlapping` middleware stops two workers processing the same order.
-- Three tries with a 10/30/60 second backoff; a permanent failure lands in
-  `failed_jobs`.
-- The job re-checks status, so an order cancelled between dispatch and pickup is
-  skipped rather than resurrected.
+Only the order id is serialised, not the model, so the worker reads the
+committed row. `->afterCommit()` keeps a worker from picking up an order whose
+transaction later rolled back, and `WithoutOverlapping` stops two workers
+processing the same order. Three tries with a 10/30/60 second backoff; a
+permanent failure lands in `failed_jobs`.
 
 ### Order confirmation email
 
 `app/Mail/OrderPlacedMail.php` with a Markdown template at
-`resources/views/mail/orders/placed.blade.php`. It carries the order number, a
-line-item table, the total and any note the customer left. Because it goes out
-from the queued job, a slow SMTP server never delays the API response.
-
-Everything lands in Mailpit at http://localhost:8025 in development.
+`resources/views/mail/orders/placed.blade.php` — order number, line-item table,
+total and any customer note. It goes out from the queued job, so a slow SMTP
+server never delays the API response.
 
 ### Product search filters
 
-`app/DataTransferObjects/ProductFilters.php` plus
-`ProductRepository::buildFilteredQuery()`. The query string is parsed once into
-an immutable DTO, which is the only thing the repository ever sees.
+`app/DataTransferObjects/ProductFilters.php`. The query string is parsed once
+into an immutable object, which is the only thing the repository sees — so the
+repository never touches HTTP and stays unit-testable, and the cache key becomes
+a pure function of the filter values.
 
-Passing the DTO instead of the `Request` buys a few things:
-
-- The repository never touches HTTP, so it stays unit-testable.
-- The cache key becomes a pure function of the filter values.
-- `sort_by` is whitelisted against `ProductFilters::SORTABLE`; anything else is
-  a 422 rather than an interpolated column name.
-- `LIKE` wildcards are escaped, so searching for `100%` is a literal search.
-- `per_page` is capped at 100, so one request can't ask for the whole table.
-
-The filters compose into a single query:
-
-```
-GET /products?search=keyboard&min_price=20&max_price=500&in_stock=1&sort_by=price&sort_direction=asc
-```
+`sort_by` is whitelisted, so anything else is a `422` rather than an
+interpolated column name. `LIKE` wildcards are escaped, so searching for `100%`
+is a literal search. `per_page` is capped at 100.
 
 ## Architecture
 
@@ -494,23 +373,6 @@ touches Eloquent:
 | `ProductRepository` | Product reads and writes, plus the Redis cache |
 | `OrderRepository` | Orders and their line items |
 | `UserRepository` | User lookup and creation |
-
-Services take them by constructor injection:
-
-```php
-class OrderService
-{
-    public function __construct(
-        private readonly OrderRepository $orders,
-        private readonly ProductRepository $products,
-    ) {}
-}
-```
-
-The payoff that mattered most here: `tests/Unit/Services/OrderServiceTest.php`
-mocks both repositories and exercises the pricing and stock rules with no
-database at all, in about 100ms. The database-backed feature tests take roughly
-seven times longer for the same ground.
 
 | Path | |
 | --- | --- |
@@ -546,24 +408,24 @@ users ─┬─< products ─┐
 
 Foreign keys:
 
-| Constraint | Rule | Why |
+| Constraint | Rule | |
 | --- | --- | --- |
 | `products.user_id` | CASCADE | A deleted merchant takes their listings |
 | `orders.user_id` | CASCADE | A deleted customer takes their history |
 | `order_items.order_id` | CASCADE | Line items can't outlive their order |
-| `order_items.product_id` | RESTRICT | A product referenced by an order can never be hard-deleted; deletion is soft |
+| `order_items.product_id` | RESTRICT | A product in an order can never be hard-deleted; deletion is soft |
 
-Indexes: `products (is_active, created_at)` for the default catalogue listing,
+Indexes: `products (is_active, created_at)` for the default listing,
 `products (price)` for range filters and price sorting, `orders (user_id,
 created_at)` for "my orders, newest first", and `orders (status)` for filtering.
 
-Money is `DECIMAL`, not `FLOAT` — binary floats can't represent 19.99 exactly,
-and across a large order that drift turns into a wrong total. Totals are summed
-with bcmath for the same reason.
+Money is `DECIMAL`, not `FLOAT`, and totals are summed with bcmath — binary
+floats can't represent 19.99 exactly, and across a large order that drift turns
+into a wrong total.
 
-Line items snapshot the product name and price because an invoice is a
-historical record. A merchant renaming or repricing a product must not change
-what a past order says the customer bought.
+Line items store `product_name` and `unit_price` as well as `product_id`,
+because an invoice is a historical record. Renaming or repricing a product must
+not change what a past order says the customer bought.
 
 ## Tests
 
@@ -580,7 +442,7 @@ Duration: ~1.4s
 
 | Suite | Covers |
 | --- | --- |
-| `Feature/Api/AuthTest` | Register, login, logout scoping, token rejection, no account enumeration |
+| `Feature/Api/AuthTest` | Register, login, logout scoping, token rejection, device names |
 | `Feature/Api/ProductTest` | CRUD, search/filter/sort, ownership 403s, validation, soft delete |
 | `Feature/Api/OrderTest` | Totals, stock deduction, snapshotting, rollback, cancellation, cross-user isolation |
 | `Feature/Api/ProductCacheTest` | Cache hits, per-filter keys, invalidation on every write |
@@ -593,65 +455,6 @@ The suite runs against a real MySQL schema (`mini_order_management_test`) rather
 than SQLite, so migrations, foreign keys and `SELECT ... FOR UPDATE` behave the
 way they will in production. `RefreshDatabase` isolates each test.
 
-Two bugs came out of writing these rather than out of clicking around:
+## Licence
 
-1. Inactive products were leaking into the public catalogue. `ProductFilters`
-   defaulted `is_active` to `true` in its constructor, but `fromRequest()` passed
-   `null` when the parameter was absent, which overrode the default.
-2. Cache invalidation never fired at all, for the `Cache::increment()` reason
-   described above. Customers would have seen stale stock indefinitely.
-
-## Decisions and trade-offs
-
-**Caching inside the repository, not as a decorator.** A `CachedProductRepository`
-wrapping a plain one would separate the two concerns more cleanly. At this size
-the extra indirection costs more in readability than it returns, and since every
-caller already goes through `ProductRepository`, it can be split out later
-without changing a single call site.
-
-**A version counter instead of cache tags.** Tags are more precise but only work
-on Redis and Memcached. The counter behaves identically on every store, which
-keeps the test suite honest about production. The cost is that unrelated entries
-get orphaned by any product write — acceptable, since they expire on their own
-and product writes are rare next to reads.
-
-**`GET /products/{id}` takes an id, not a bound model.** Route-model binding
-would query the database directly and skip the cache, so that one endpoint
-resolves through the repository instead.
-
-**404, not 403, for someone else's order.** `OrderRepository::findUserOrder()`
-scopes by owner, so a foreign order id is indistinguishable from a missing one.
-A 403 would confirm the order exists.
-
-**One role, not merchant vs customer.** The brief says "users can create products
-and place orders", so this is a marketplace — every account can do both, the way
-Etsy or OLX work rather than a storefront with separate seller accounts. That
-leaves two rules, and both are enforced:
-
-| | Own product | Someone else's |
-| --- | :---: | :---: |
-| Update / delete | yes | 403 |
-| Order | yes | yes |
-
-Editing is owner-only through `ProductPolicy`, which is the real security
-boundary and is covered by `ProductTest`. Ordering is open to everyone, a seller
-buying their own listing included. Nothing breaks when they do, and with no
-payments in the system there's no incentive to game it. Real marketplaces only
-block self-purchase once commission or seller ratings are at stake.
-
-**Soft deletes on products only.** Orders and their items are financial records
-and are never deleted. Products are soft-deleted so `order_items.product_id`
-stays valid, which is what makes the RESTRICT foreign key safe.
-
-**Route patterns instead of per-route constraints.** `routes/api.php` declares
-`Route::pattern('product', '[0-9]+')` once rather than chaining `whereNumber()`
-onto seven routes. Without it, `/products/abc` reaches a controller typed
-`int $product` and produces a 500 instead of a 404.
-
-**DNS validation on registration only in production.** `email:rfc,dns` catches
-typo'd domains but costs a live MX lookup per request, which makes tests slow
-and flaky. The rule is applied only when `app()->isProduction()`.
-
-**`preventLazyLoading()` outside production.** An accidental N+1 raises an
-exception in development instead of quietly degrading production.
-
+MIT.
