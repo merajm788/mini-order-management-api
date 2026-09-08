@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\DataTransferObjects\ProductFilters;
+use App\Jobs\CancelOrdersForDeletedProduct;
 use App\Models\Product;
 use App\Models\User;
 use App\Repositories\ProductRepository;
@@ -44,7 +45,11 @@ class ProductService
 
     public function delete(Product $product): bool
     {
-        return $this->products->delete($product);
+        $deleted = $this->products->delete($product);
+
+        CancelOrdersForDeletedProduct::dispatch($product->id)->afterCommit();
+
+        return $deleted;
     }
 
     /** Builds a readable, unique SKU such as WIRELESS-MOUSE-8F3A. */

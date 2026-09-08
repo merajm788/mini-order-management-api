@@ -6,13 +6,35 @@
     },
     "auth": {
         "type": "bearer",
-        "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+        "bearer": [
+            {
+                "key": "token",
+                "value": "{{token}}",
+                "type": "string"
+            }
+        ]
     },
     "variable": [
-        { "key": "base_url", "value": "http://localhost:8000/api/v1", "type": "string" },
-        { "key": "token", "value": "", "type": "string" },
-        { "key": "product_id", "value": "1", "type": "string" },
-        { "key": "order_id", "value": "1", "type": "string" }
+        {
+            "key": "base_url",
+            "value": "http://localhost:8000/api/v1",
+            "type": "string"
+        },
+        {
+            "key": "token",
+            "value": "",
+            "type": "string"
+        },
+        {
+            "key": "product_id",
+            "value": "1",
+            "type": "string"
+        },
+        {
+            "key": "order_id",
+            "value": "1",
+            "type": "string"
+        }
     ],
     "item": [
         {
@@ -35,17 +57,33 @@
                         }
                     ],
                     "request": {
-                        "auth": { "type": "noauth" },
+                        "auth": {
+                            "type": "noauth"
+                        },
                         "method": "POST",
                         "header": [
-                            { "key": "Accept", "value": "application/json" },
-                            { "key": "Content-Type", "value": "application/json" }
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"name\": \"Alex Doe\",\n    \"email\": \"alex+{{$randomInt}}@example.com\",\n    \"password\": \"secret-pass-1\",\n    \"password_confirmation\": \"secret-pass-1\"\n}"
+                            "raw": "{\n    \"name\": \"Alex Doe\",\n    \"email\": \"alex+{{$randomInt}}@example.com\",\n    \"password\": \"secret-pass-1\",\n    \"password_confirmation\": \"secret-pass-1\",\n    \"device_name\": \"postman\"\n}"
                         },
-                        "url": { "raw": "{{base_url}}/register", "host": ["{{base_url}}"], "path": ["register"] },
+                        "url": {
+                            "raw": "{{base_url}}/register",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "register"
+                            ]
+                        },
                         "description": "Creates an account and returns an access token. Rate limited to 5 requests per minute per IP."
                     }
                 },
@@ -67,17 +105,33 @@
                         }
                     ],
                     "request": {
-                        "auth": { "type": "noauth" },
+                        "auth": {
+                            "type": "noauth"
+                        },
                         "method": "POST",
                         "header": [
-                            { "key": "Accept", "value": "application/json" },
-                            { "key": "Content-Type", "value": "application/json" }
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"email\": \"customer@example.com\",\n    \"password\": \"password123\"\n}"
+                            "raw": "{\n    \"email\": \"customer@example.com\",\n    \"password\": \"password123\",\n    \"device_name\": \"postman\"\n}"
                         },
-                        "url": { "raw": "{{base_url}}/login", "host": ["{{base_url}}"], "path": ["login"] },
+                        "url": {
+                            "raw": "{{base_url}}/login",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "login"
+                            ]
+                        },
                         "description": "Run this first. The test script saves the token for every other request."
                     }
                 },
@@ -85,16 +139,42 @@
                     "name": "Current user",
                     "request": {
                         "method": "GET",
-                        "header": [{ "key": "Accept", "value": "application/json" }],
-                        "url": { "raw": "{{base_url}}/me", "host": ["{{base_url}}"], "path": ["me"] }
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/me",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "me"
+                            ]
+                        }
                     }
                 },
                 {
                     "name": "Logout",
                     "request": {
                         "method": "POST",
-                        "header": [{ "key": "Accept", "value": "application/json" }],
-                        "url": { "raw": "{{base_url}}/logout", "host": ["{{base_url}}"], "path": ["logout"] },
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/logout",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "logout"
+                            ]
+                        },
                         "description": "Revokes only the token used for this request; other devices stay signed in."
                     }
                 }
@@ -106,14 +186,30 @@
                 {
                     "name": "List products",
                     "request": {
-                        "auth": { "type": "noauth" },
+                        "auth": {
+                            "type": "noauth"
+                        },
                         "method": "GET",
-                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            }
+                        ],
                         "url": {
                             "raw": "{{base_url}}/products?per_page=15",
-                            "host": ["{{base_url}}"],
-                            "path": ["products"],
-                            "query": [{ "key": "per_page", "value": "15" }]
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "products"
+                            ],
+                            "query": [
+                                {
+                                    "key": "per_page",
+                                    "value": "15"
+                                }
+                            ]
                         },
                         "description": "Public. Served from Redis when the cache is warm."
                     }
@@ -121,20 +217,52 @@
                 {
                     "name": "Search and filter products",
                     "request": {
-                        "auth": { "type": "noauth" },
+                        "auth": {
+                            "type": "noauth"
+                        },
                         "method": "GET",
-                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            }
+                        ],
                         "url": {
-                            "raw": "{{base_url}}/products?search=keyboard&min_price=20&max_price=500&in_stock=1&sort_by=price&sort_direction=asc",
-                            "host": ["{{base_url}}"],
-                            "path": ["products"],
+                            "raw": "{{base_url}}/products?search=keyboard&min_price=20&max_price=500&in_stock=true&sort_by=price&sort_direction=asc",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "products"
+                            ],
                             "query": [
-                                { "key": "search", "value": "keyboard", "description": "Matches name, SKU or description" },
-                                { "key": "min_price", "value": "20" },
-                                { "key": "max_price", "value": "500" },
-                                { "key": "in_stock", "value": "1" },
-                                { "key": "sort_by", "value": "price", "description": "name | price | stock | created_at" },
-                                { "key": "sort_direction", "value": "asc" }
+                                {
+                                    "key": "search",
+                                    "value": "keyboard",
+                                    "description": "Matches name, SKU or description"
+                                },
+                                {
+                                    "key": "min_price",
+                                    "value": "20"
+                                },
+                                {
+                                    "key": "max_price",
+                                    "value": "500"
+                                },
+                                {
+                                    "key": "in_stock",
+                                    "value": "true",
+                                    "description": "true/1 = in stock, false/0 = out of stock"
+                                },
+                                {
+                                    "key": "sort_by",
+                                    "value": "price",
+                                    "description": "name | price | stock | created_at"
+                                },
+                                {
+                                    "key": "sort_direction",
+                                    "value": "asc"
+                                }
                             ]
                         }
                     }
@@ -142,13 +270,25 @@
                 {
                     "name": "Get single product",
                     "request": {
-                        "auth": { "type": "noauth" },
+                        "auth": {
+                            "type": "noauth"
+                        },
                         "method": "GET",
-                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            }
+                        ],
                         "url": {
                             "raw": "{{base_url}}/products/{{product_id}}",
-                            "host": ["{{base_url}}"],
-                            "path": ["products", "{{product_id}}"]
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "products",
+                                "{{product_id}}"
+                            ]
                         }
                     }
                 },
@@ -169,14 +309,28 @@
                     "request": {
                         "method": "POST",
                         "header": [
-                            { "key": "Accept", "value": "application/json" },
-                            { "key": "Content-Type", "value": "application/json" }
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
                         ],
                         "body": {
                             "mode": "raw",
                             "raw": "{\n    \"name\": \"Standing Desk\",\n    \"description\": \"Electric height adjustable desk.\",\n    \"price\": 499.99,\n    \"stock\": 12\n}"
                         },
-                        "url": { "raw": "{{base_url}}/products", "host": ["{{base_url}}"], "path": ["products"] },
+                        "url": {
+                            "raw": "{{base_url}}/products",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "products"
+                            ]
+                        },
                         "description": "The SKU is generated when omitted. The caller becomes the owner."
                     }
                 },
@@ -185,8 +339,14 @@
                     "request": {
                         "method": "PUT",
                         "header": [
-                            { "key": "Accept", "value": "application/json" },
-                            { "key": "Content-Type", "value": "application/json" }
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
                         ],
                         "body": {
                             "mode": "raw",
@@ -194,8 +354,13 @@
                         },
                         "url": {
                             "raw": "{{base_url}}/products/{{product_id}}",
-                            "host": ["{{base_url}}"],
-                            "path": ["products", "{{product_id}}"]
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "products",
+                                "{{product_id}}"
+                            ]
                         },
                         "description": "Owner only; anyone else receives 403."
                     }
@@ -204,11 +369,21 @@
                     "name": "Delete product",
                     "request": {
                         "method": "DELETE",
-                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            }
+                        ],
                         "url": {
                             "raw": "{{base_url}}/products/{{product_id}}",
-                            "host": ["{{base_url}}"],
-                            "path": ["products", "{{product_id}}"]
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "products",
+                                "{{product_id}}"
+                            ]
                         },
                         "description": "Soft delete, so historical order items keep their reference."
                     }
@@ -240,14 +415,28 @@
                     "request": {
                         "method": "POST",
                         "header": [
-                            { "key": "Accept", "value": "application/json" },
-                            { "key": "Content-Type", "value": "application/json" }
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
                         ],
                         "body": {
                             "mode": "raw",
                             "raw": "{\n    \"items\": [\n        { \"product_id\": 1, \"quantity\": 2 },\n        { \"product_id\": 2, \"quantity\": 1 }\n    ],\n    \"notes\": \"Please deliver after 6pm.\"\n}"
                         },
-                        "url": { "raw": "{{base_url}}/orders", "host": ["{{base_url}}"], "path": ["orders"] },
+                        "url": {
+                            "raw": "{{base_url}}/orders",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "orders"
+                            ]
+                        },
                         "description": "Checks stock, deducts it inside a locked transaction, calculates the total and queues the confirmation email. Rate limited to 10 requests per minute per user."
                     }
                 },
@@ -268,14 +457,28 @@
                     "request": {
                         "method": "POST",
                         "header": [
-                            { "key": "Accept", "value": "application/json" },
-                            { "key": "Content-Type", "value": "application/json" }
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
                         ],
                         "body": {
                             "mode": "raw",
                             "raw": "{\n    \"items\": [\n        { \"product_id\": 4, \"quantity\": 999 }\n    ]\n}"
                         },
-                        "url": { "raw": "{{base_url}}/orders", "host": ["{{base_url}}"], "path": ["orders"] },
+                        "url": {
+                            "raw": "{{base_url}}/orders",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "orders"
+                            ]
+                        },
                         "description": "Demonstrates the shortage payload: product_id, product_name, requested and available for every affected line."
                     }
                 },
@@ -283,14 +486,31 @@
                     "name": "List my orders",
                     "request": {
                         "method": "GET",
-                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            }
+                        ],
                         "url": {
                             "raw": "{{base_url}}/orders?per_page=15",
-                            "host": ["{{base_url}}"],
-                            "path": ["orders"],
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "orders"
+                            ],
                             "query": [
-                                { "key": "per_page", "value": "15" },
-                                { "key": "status", "value": "pending", "disabled": true, "description": "pending | processing | completed | cancelled" }
+                                {
+                                    "key": "per_page",
+                                    "value": "15"
+                                },
+                                {
+                                    "key": "status",
+                                    "value": "pending",
+                                    "disabled": true,
+                                    "description": "pending | processing | completed | cancelled"
+                                }
                             ]
                         }
                     }
@@ -299,11 +519,21 @@
                     "name": "Get order details",
                     "request": {
                         "method": "GET",
-                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            }
+                        ],
                         "url": {
                             "raw": "{{base_url}}/orders/{{order_id}}",
-                            "host": ["{{base_url}}"],
-                            "path": ["orders", "{{order_id}}"]
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "orders",
+                                "{{order_id}}"
+                            ]
                         },
                         "description": "Scoped to the caller: another user's order returns 404, never 403."
                     }
@@ -312,11 +542,22 @@
                     "name": "Cancel order",
                     "request": {
                         "method": "POST",
-                        "header": [{ "key": "Accept", "value": "application/json" }],
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            }
+                        ],
                         "url": {
                             "raw": "{{base_url}}/orders/{{order_id}}/cancel",
-                            "host": ["{{base_url}}"],
-                            "path": ["orders", "{{order_id}}", "cancel"]
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "orders",
+                                "{{order_id}}",
+                                "cancel"
+                            ]
                         },
                         "description": "Restores the reserved stock. Only pending and processing orders can be cancelled."
                     }

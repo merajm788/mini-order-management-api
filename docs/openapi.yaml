@@ -137,7 +137,10 @@ paths:
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
       responses:
         '200':
-          description: A page of products. Served from Redis when warm.
+          description: >-
+            A page of products, served from Redis when warm. A search that matches
+            nothing is still a 200 with an empty data array and the message
+            "No products found."
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProductCollection' }
@@ -217,7 +220,10 @@ paths:
     delete:
       tags: [Products]
       summary: Delete a product
-      description: Soft delete, so existing order items keep their reference.
+      description: >-
+        Soft delete, so existing order items keep their reference. Any order still
+        pending or processing on this product is cancelled on the queue, its other
+        items' stock is returned, and the customer is emailed.
       responses:
         '200':
           description: Product deleted.

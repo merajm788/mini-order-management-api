@@ -23,7 +23,10 @@ class ProductController extends Controller
     {
         $products = $this->products->search($request->toFilters());
 
-        return ApiResponse::paginated(ProductResource::collection($products), 'Products retrieved successfully.');
+        return ApiResponse::paginated(
+            ProductResource::collection($products),
+            $products->total() === 0 ? 'No products found.' : 'Products retrieved successfully.',
+        );
     }
 
     /**

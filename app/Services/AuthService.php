@@ -20,8 +20,6 @@ class AuthService
      */
     public function register(array $data): array
     {
-        // device_name only names the token, so it is not part of the user row.
-        // The model's 'hashed' cast takes care of the password.
         $user = $this->users->create(
             Arr::only($data, ['name', 'email', 'password'])
         );

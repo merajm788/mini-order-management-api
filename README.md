@@ -3,15 +3,16 @@
 A REST API where users register, list products for sale, and place orders
 against each other's listings. Built with Laravel 13, PHP 8.4 and MySQL 8.
 
-Placing an order checks stock, deducts it inside a locked transaction so it
-cannot be oversold, calculates the total, saves the line items, and queues a
-confirmation email.
+Anyone with an account can do both things — sell and buy — the way Etsy or OLX
+work rather than a storefront with separate seller accounts. You can only edit
+or delete the products you created, but you can order anyone's.
 
 ## Contents
 
 - [Setup](#setup)
 - [URLs](#urls)
 - [Seeded accounts](#seeded-accounts)
+- [How it works](#how-it-works)
 - [API endpoints](#api-endpoints)
 - [Response format](#response-format)
 - [R&D features](#rd-features)
@@ -30,27 +31,27 @@ cd mini-order-management-api
 cp .env.example .env
 
 docker compose up -d --build
-docker compose exec app composer install
+docker compose exec -u "$(id -u)" app composer install
 docker compose exec app php artisan key:generate
 docker compose exec app php artisan migrate --seed
 ```
 
-The `composer install` step looks redundant next to `--build`, and isn't. The
-image does install dependencies, but the compose file bind mounts your project
-directory over `/var/www/html` so that code edits show up without a rebuild —
-and that mount hides the image's `vendor/`. A fresh clone has no `vendor/` of
-its own (it's gitignored), so the container sees an empty directory until you
-install into the mount. Running it there also leaves `vendor/` on the host,
-which is what your editor and `./vendor/bin/pint` need.
+That's everything — no `.env` editing. The compose file gives the containers
+the in-network hostnames (`mysql`, `redis`, `mailpit`), while the `.env` values
+point at the published host ports so `php artisan` also works from your shell.
 
-Nothing else needs editing. The compose file passes the in-network hostnames
-(`mysql`, `redis`, `mailpit`) to the containers, while the `.env` values stay
-pointed at the published host ports so `php artisan` also works from your own
-shell.
+Two notes on that `composer install`:
+
+- It isn't redundant next to `--build`. The image installs dependencies, but
+  compose bind mounts your project directory over `/var/www/html` so code edits
+  show up without a rebuild — and that mount hides the image's `vendor/`. A
+  fresh clone has no `vendor/` of its own, so you install into the mount.
+- `-u "$(id -u)"` matters. `docker compose exec` runs as root by default, and
+  root-owned files in the mount stop PHP-FPM (which runs as your uid) from
+  writing to `storage/`.
 
 If your account isn't uid/gid 1000, build with
-`UID=$(id -u) GID=$(id -g) docker compose up -d --build` so the container can
-write to the bind-mounted `storage/` directory.
+`UID=$(id -u) GID=$(id -g) docker compose up -d --build`.
 
 ### Without Docker
 
@@ -74,7 +75,7 @@ GRANT ALL PRIVILEGES ON mini_order_management_test.* TO 'laravel'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-Set `DB_PORT=3306` and `REDIS_PORT=6379` in `.env` (the defaults are 3307/6380
+Set `DB_PORT=3306` and `REDIS_PORT=6379` in `.env` (the defaults are 3307/6380,
 for the Docker setup), then:
 
 ```bash
@@ -83,39 +84,36 @@ php artisan serve                                # terminal 1
 php artisan queue:work --queue=orders,default    # terminal 2
 ```
 
+The queue worker is not optional — order confirmation emails and the
+`pending → processing` transition both run on it.
+
 #### Somewhere for the emails to go
 
-Mailpit is a container, so without Docker nothing is listening on the SMTP port
-and sending an order confirmation fails. Pick one of these.
-
-**Install Mailpit natively** — keeps the web UI at http://localhost:8025 and
-needs no `.env` change, since it uses the same 8025/1025 ports:
+Mailpit is a container, so without Docker nothing listens on the SMTP port and
+sending a confirmation fails. Pick one:
 
 ```bash
+# Install Mailpit natively — UI stays at http://localhost:8025, no .env change
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/axllent/mailpit/develop/install.sh)"
 mailpit
 ```
 
-Other platforms: `brew install mailpit` on macOS, or grab a binary from
+macOS: `brew install mailpit`. Or grab a binary from
 [github.com/axllent/mailpit/releases](https://github.com/axllent/mailpit/releases).
 
-**Run only that container**, if Docker is available but you want the rest on
-the host:
-
 ```bash
+# Or run just that one container
 docker compose up -d mailpit
 ```
 
-**Write to the log instead**, with no mail server at all. Set `MAIL_MAILER=log`
-in `.env` and the full email lands in the log file:
-
 ```bash
+# Or skip the mail server: set MAIL_MAILER=log in .env and read the log
 tail -f storage/logs/laravel.log
 ```
 
 ### MySQL and Redis in Docker, PHP on the host
 
-Fastest for development, and the `.env.example` ports are already set for it:
+Fastest for development, and the `.env.example` ports already match:
 
 ```bash
 docker compose up -d mysql redis mailpit
@@ -139,21 +137,16 @@ php artisan queue:work --queue=orders,default    # second terminal
 MySQL and Redis use 3307 and 6380 rather than their defaults so they don't
 collide with anything already on the host. A phpMyAdmin installed on your
 machine talks to 3306 and won't see this database — use the containerised one at
-port 8080, or point a GUI client at 3307.
+port 8080, or point a GUI client at 3307. Mailpit and phpMyAdmin both come from
+containers, so those two URLs need Docker running.
 
 **Swagger UI** is served from a CDN against the checked-in
-[`docs/openapi.yaml`](docs/openapi.yaml). You can send authenticated requests
-from that page: hit **Authorize** and paste a token from `POST /login`.
+[`docs/openapi.yaml`](docs/openapi.yaml). You can send real requests from that
+page: hit **Authorize** and paste a token from `POST /login`.
 
-**Postman**: import [`docs/postman_collection.json`](docs/postman_collection.json).
-Run **Auth → Login** first — its test script stores the token, and every other
-request picks it up.
-
-**Mailpit** and **phpMyAdmin** come from containers, so those two URLs only work
-when Docker is running. Mailpit catches order confirmations, which arrive a
-second or two after an order is placed — the `queue` container runs the worker
-already; on the host, start one yourself with
-`php artisan queue:work --queue=orders,default`.
+**Postman**: import [`docs/postman_collection.json`](docs/postman_collection.json)
+and run **Auth → Login** first. Its test script stores the token, and every
+other request picks it up.
 
 ## Seeded accounts
 
@@ -165,6 +158,95 @@ already; on the host, start one yourself with
 Seeding creates 10 users, 23 products and 5 orders. The catalogue includes one
 out-of-stock and one inactive product so the filters and rejection paths have
 something to work against.
+
+## How it works
+
+### Signing up and signing in
+
+1. `POST /register` or `POST /login` returns a token.
+2. Send it as `Authorization: Bearer <token>` on protected endpoints.
+3. `POST /logout` revokes **only that token**. Other devices stay signed in.
+
+Both endpoints accept an optional `device_name`. It names the token, so a user
+can see "iphone-15" and "macbook-pro" in their sessions and revoke one without
+signing out everywhere. Tokens expire after 30 days.
+
+Login gives the same error for a wrong password and an unknown email, so the
+response can't be used to check whether an address is registered.
+
+### Listing a product
+
+1. `POST /products` with `name`, `price` and `stock`.
+2. The caller becomes the owner.
+3. If you don't send a `sku`, one is generated from the name —
+   `Wireless Mouse` becomes `WIRELESS-MOUSE-8F3A`.
+
+Only the owner can update or delete it afterwards; anyone else gets a `403`.
+
+### Browsing products
+
+`GET /products` is public — no token needed. It supports search, price range,
+stock and active filters, sorting and pagination, and they compose into a single
+query.
+
+Inactive products are hidden by default. A search that matches nothing is still
+a `200` with an empty `data` array — only the message changes, to
+`"No products found."` A missing id on `GET /products/{id}` is a `404`.
+
+Results come from Redis when the cache is warm.
+
+### Placing an order
+
+`POST /orders` with a list of `product_id` and `quantity` pairs. Inside one
+database transaction:
+
+1. **Lock the products.** `SELECT ... FOR UPDATE` on every product in the cart,
+   in sorted id order.
+2. **Check them.** Each product must exist, be active, and have enough stock.
+   If any fails, nothing is written and you get a `422` naming *every* problem
+   at once, so the whole cart can be fixed in one round trip.
+3. **Calculate the total** from the live prices, with bcmath.
+4. **Save the line items,** each one storing the product's name and price as
+   they are right now.
+5. **Reduce the stock** by exactly what was ordered.
+
+After the transaction commits, a job goes onto the queue. It moves the order
+from `pending` to `processing` and emails the customer their confirmation.
+
+The locking is what makes step 2 trustworthy. Without it, two people ordering
+the last item could both pass the stock check and drive stock to `-1`. With it,
+the second request waits for the first to commit, re-reads the real number, and
+fails properly.
+
+Line items keep a copy of the product name and price because an invoice is a
+historical record. If the seller renames the product or changes its price
+tomorrow, your old order still shows what you actually bought.
+
+### Cancelling an order
+
+`POST /orders/{id}/cancel` sets the status to `cancelled` and returns the stock.
+Only `pending` and `processing` orders can be cancelled; anything else is a
+`409`.
+
+### When a product is deleted
+
+Deleting a product is a soft delete, so old invoices keep working. But orders
+still waiting on that product can never be fulfilled, so:
+
+1. The product is soft deleted and disappears from the catalogue.
+2. A queued job finds every `pending` or `processing` order containing it.
+3. Each of those orders is cancelled, and the stock of its *other* items is
+   returned.
+4. Each customer gets an email explaining which product went away.
+
+This runs on the queue because a popular product can be sitting in many open
+orders.
+
+### Reading your orders
+
+`GET /orders` lists your own, newest first, and takes `?status=`. `GET /orders/{id}`
+returns one with its line items. Both are scoped to you — someone else's order
+id returns a `404`, not a `403`, so the response never confirms it exists.
 
 ## API endpoints
 
@@ -181,9 +263,8 @@ Base URL `http://localhost:8000/api/v1`. Protected endpoints expect
 | `GET` | `/me` | yes | The current user |
 
 `register` takes `name`, `email`, `password`, `password_confirmation` and an
-optional `device_name`, which names the token so a user can revoke one device
-without signing out everywhere. `login` takes `email`, `password` and the same
-optional `device_name`.
+optional `device_name`. `login` takes `email`, `password` and the same optional
+`device_name`.
 
 ### Products
 
@@ -195,8 +276,8 @@ optional `device_name`.
 | `PUT` | `/products/{id}` | yes | Update — owner only, every field optional |
 | `DELETE` | `/products/{id}` | yes | Soft delete — owner only |
 
-Create takes `name`, `price` and `stock`, plus optional `sku` (generated when
-omitted), `description` and `is_active`.
+`POST` takes `name`, `price` and `stock`, plus optional `sku`, `description`
+and `is_active`.
 
 Query parameters for the listing:
 
@@ -224,8 +305,7 @@ GET /products?search=keyboard&min_price=20&max_price=500&in_stock=true&sort_by=p
 | `GET` | `/orders/{id}` | yes | One order with its line items |
 | `POST` | `/orders/{id}/cancel` | yes | Cancel and return the stock |
 
-Statuses are `pending`, `processing`, `completed` and `cancelled`. Only
-`pending` and `processing` orders can be cancelled.
+Statuses are `pending`, `processing`, `completed` and `cancelled`.
 
 ### Example: placing an order
 
@@ -262,8 +342,7 @@ curl -s -X POST http://localhost:8000/api/v1/orders \
 }
 ```
 
-Ordering more than the available stock returns `422` and names every shortage in
-one response, so a client can fix the whole cart in one round trip:
+Ordering more than the available stock:
 
 ```json
 {
@@ -307,19 +386,19 @@ Paginated endpoints keep Laravel's `meta` and `links` blocks alongside it.
 
 ### Redis caching for products
 
-`app/Repositories/ProductRepository.php`. Both read paths — the paginated
-listing and single-product lookups — are read-through caches, with the TTL in
-`PRODUCT_CACHE_TTL` (default 600s).
+`app/Repositories/ProductRepository.php`. The product listing and single-product
+lookups are read-through caches, with the TTL in `PRODUCT_CACHE_TTL`
+(default 600s).
 
-A listing has one cache key per filter combination, so a write cannot enumerate
+A listing has one cache key per filter combination, so a write can't enumerate
 what to delete. Redis tags would solve that but only work on Redis and
-Memcached, so every key carries a version number instead; a write increments it
+Memcached, so every key carries a version number instead — a write increments it
 and orphans all the old keys at once. Every write path does this, including the
 stock reduction from an order, so a customer never sees stock that isn't there.
 
 ### API rate limiting
 
-Three limiters, registered in `AppServiceProvider::configureRateLimiting()`:
+Three limiters, in `AppServiceProvider::configureRateLimiting()`:
 
 | Limiter | Default | Keyed by | Applies to |
 | --- | --- | --- | --- |
@@ -329,34 +408,36 @@ Three limiters, registered in `AppServiceProvider::configureRateLimiting()`:
 
 `auth` is keyed by IP because a brute-force attacker has no token yet. The other
 two prefer the user id so colleagues behind one office IP don't throttle each
-other. All three are configurable: `RATE_LIMIT_API`, `RATE_LIMIT_AUTH`,
+other. Configurable with `RATE_LIMIT_API`, `RATE_LIMIT_AUTH`,
 `RATE_LIMIT_ORDERS`.
 
 ### Queued order processing
 
-`app/Jobs/ProcessOrder.php`. Placing an order returns as soon as the transaction
-commits; the confirmation email and the `pending → processing` transition run on
-the `orders` queue backed by Redis.
+Two jobs run on the `orders` queue, backed by Redis:
 
-Only the order id is serialised, not the model, so the worker reads the
-committed row. `->afterCommit()` keeps a worker from picking up an order whose
-transaction later rolled back, and `WithoutOverlapping` stops two workers
-processing the same order. Three tries with a 10/30/60 second backoff; a
-permanent failure lands in `failed_jobs`.
+- `ProcessOrder` — moves a new order to `processing` and sends the confirmation.
+- `CancelOrdersForDeletedProduct` — cancels the open orders for a product that
+  has just been deleted, and emails those customers.
 
-### Order confirmation email
+Both carry only an id, not a model, so the worker reads committed rows.
+`->afterCommit()` keeps a worker from picking up something whose transaction
+later rolled back, and `WithoutOverlapping` stops two workers handling the same
+order. Three tries with a 10/30/60 second backoff; a permanent failure lands in
+`failed_jobs`.
 
-`app/Mail/OrderPlacedMail.php` with a Markdown template at
-`resources/views/mail/orders/placed.blade.php` — order number, line-item table,
-total and any customer note. It goes out from the queued job, so a slow SMTP
-server never delays the API response.
+### Emails
+
+`OrderPlacedMail` and `OrderCancelledMail`, both Markdown templates in
+`resources/views/mail/orders/`. Each carries the order number, a line-item
+table and the total. They go out from queued jobs, so a slow SMTP server never
+delays the API response.
 
 ### Product search filters
 
 `app/DataTransferObjects/ProductFilters.php`. The query string is parsed once
 into an immutable object, which is the only thing the repository sees — so the
-repository never touches HTTP and stays unit-testable, and the cache key becomes
-a pure function of the filter values.
+repository never touches HTTP, and the cache key becomes a pure function of the
+filter values.
 
 `sort_by` is whitelisted, so anything else is a `422` rather than an
 interpolated column name. `LIKE` wildcards are escaped, so searching for `100%`
@@ -374,7 +455,7 @@ Request
   → Eloquent → MySQL
 ```
 
-Every database query lives in one of three repositories and nothing above them
+Every database query lives in one of three repositories, and nothing above them
 touches Eloquent:
 
 | | |
@@ -394,8 +475,8 @@ touches Eloquent:
 | `app/DataTransferObjects/` | `ProductFilters` |
 | `app/Enums/` | `OrderStatus` |
 | `app/Exceptions/` | Domain exceptions that render themselves |
-| `app/Jobs/` | `ProcessOrder` |
-| `app/Mail/` | `OrderPlacedMail` |
+| `app/Jobs/` | `ProcessOrder`, `CancelOrdersForDeletedProduct` |
+| `app/Mail/` | `OrderPlacedMail`, `OrderCancelledMail` |
 | `app/Policies/` | Ownership checks |
 | `docker/` | Dockerfile, nginx config, MySQL init |
 | `docs/` | OpenAPI spec, Postman collection |
@@ -429,12 +510,8 @@ Indexes: `products (is_active, created_at)` for the default listing,
 created_at)` for "my orders, newest first", and `orders (status)` for filtering.
 
 Money is `DECIMAL`, not `FLOAT`, and totals are summed with bcmath — binary
-floats can't represent 19.99 exactly, and across a large order that drift turns
-into a wrong total.
-
-Line items store `product_name` and `unit_price` as well as `product_id`,
-because an invoice is a historical record. Renaming or repricing a product must
-not change what a past order says the customer bought.
+floats can't represent 19.99 exactly, and across a large order that turns into a
+wrong total.
 
 ## Tests
 
@@ -445,8 +522,8 @@ php artisan test tests/Feature/Api/OrderTest.php   # one file
 ```
 
 ```
-Tests:    83 passed (238 assertions)
-Duration: ~1.4s
+Tests:    91 passed (253 assertions)
+Duration: ~1.6s
 ```
 
 | Suite | Covers |
@@ -457,6 +534,7 @@ Duration: ~1.4s
 | `Feature/Api/ProductCacheTest` | Cache hits, per-filter keys, invalidation on every write |
 | `Feature/Api/RateLimitTest` | All three limiters, per-user tracking, independence |
 | `Feature/Jobs/ProcessOrderTest` | Status transition, mail dispatch, cancelled and missing orders |
+| `Feature/Jobs/CancelOrdersForDeletedProductTest` | Cancelling open orders when a product goes away, stock return, mail |
 | `Feature/DocumentationTest` | Docs routes and OpenAPI spec coverage |
 | `Unit/Services/OrderServiceTest` | Pricing and stock rules against mocked repositories |
 

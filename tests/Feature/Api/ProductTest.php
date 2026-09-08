@@ -2,9 +2,11 @@
 
 namespace Tests\Feature\Api;
 
+use App\Jobs\CancelOrdersForDeletedProduct;
 use App\Models\Product;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -225,6 +227,34 @@ class ProductTest extends TestCase
 
         // Soft deleted: existing order items keep their foreign key.
         $this->assertSoftDeleted('products', ['id' => $product->id]);
+    }
+
+    #[Test]
+    public function an_empty_listing_says_so(): void
+    {
+        Product::factory()->for($this->user)->create(['name' => 'Wireless Mouse']);
+
+        $this->getJson('/api/v1/products?search=nothing-matches-this')
+            ->assertOk()
+            ->assertJsonCount(0, 'data')
+            ->assertJsonPath('message', 'No products found.');
+    }
+
+    #[Test]
+    public function deleting_a_product_queues_the_cancellation_of_its_open_orders(): void
+    {
+        Queue::fake();
+
+        $product = Product::factory()->for($this->user)->create();
+
+        $this->actingAs($this->user, 'sanctum')
+            ->deleteJson("/api/v1/products/{$product->id}")
+            ->assertOk();
+
+        Queue::assertPushed(
+            CancelOrdersForDeletedProduct::class,
+            fn (CancelOrdersForDeletedProduct $job) => $job->productId === $product->id,
+        );
     }
 
     #[Test]
