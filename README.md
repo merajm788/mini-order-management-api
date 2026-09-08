@@ -230,14 +230,17 @@ Only `pending` and `processing` orders can be cancelled; anything else is a
 
 ### When a product is deleted
 
-Deleting a product is a soft delete, so old invoices keep working. But orders
-still waiting on that product can never be fulfilled, so:
+Deleting a product is a soft delete, so old invoices keep working. Orders still
+waiting on it need fixing, though:
 
 1. The product is soft deleted and disappears from the catalogue.
 2. A queued job finds every `pending` or `processing` order containing it.
-3. Each of those orders is cancelled, and the stock of its *other* items is
-   returned.
-4. Each customer gets an email explaining which product went away.
+3. That one line is removed from each order and the total is recalculated. The
+   rest of the order ships as normal — an order for a phone and a pair of
+   headphones does not lose the headphones because the phone went away.
+4. An order left with no lines at all is cancelled instead.
+5. Either way the customer gets an email saying what happened and what the new
+   total is.
 
 This runs on the queue because a popular product can be sitting in many open
 orders.
@@ -416,8 +419,8 @@ other. Configurable with `RATE_LIMIT_API`, `RATE_LIMIT_AUTH`,
 Two jobs run on the `orders` queue, backed by Redis:
 
 - `ProcessOrder` — moves a new order to `processing` and sends the confirmation.
-- `CancelOrdersForDeletedProduct` — cancels the open orders for a product that
-  has just been deleted, and emails those customers.
+- `HandleDeletedProductOrders` — strips a just-deleted product from the open
+  orders holding it, re-totals them, and emails those customers.
 
 Both carry only an id, not a model, so the worker reads committed rows.
 `->afterCommit()` keeps a worker from picking up something whose transaction
@@ -475,7 +478,7 @@ touches Eloquent:
 | `app/DataTransferObjects/` | `ProductFilters` |
 | `app/Enums/` | `OrderStatus` |
 | `app/Exceptions/` | Domain exceptions that render themselves |
-| `app/Jobs/` | `ProcessOrder`, `CancelOrdersForDeletedProduct` |
+| `app/Jobs/` | `ProcessOrder`, `HandleDeletedProductOrders` |
 | `app/Mail/` | `OrderPlacedMail`, `OrderCancelledMail` |
 | `app/Policies/` | Ownership checks |
 | `docker/` | Dockerfile, nginx config, MySQL init |
@@ -522,7 +525,7 @@ php artisan test tests/Feature/Api/OrderTest.php   # one file
 ```
 
 ```
-Tests:    91 passed (253 assertions)
+Tests:    92 passed (259 assertions)
 Duration: ~1.6s
 ```
 
@@ -534,7 +537,7 @@ Duration: ~1.6s
 | `Feature/Api/ProductCacheTest` | Cache hits, per-filter keys, invalidation on every write |
 | `Feature/Api/RateLimitTest` | All three limiters, per-user tracking, independence |
 | `Feature/Jobs/ProcessOrderTest` | Status transition, mail dispatch, cancelled and missing orders |
-| `Feature/Jobs/CancelOrdersForDeletedProductTest` | Cancelling open orders when a product goes away, stock return, mail |
+| `Feature/Jobs/HandleDeletedProductOrdersTest` | Removing a deleted product's line, re-totalling, cancelling empty orders |
 | `Feature/DocumentationTest` | Docs routes and OpenAPI spec coverage |
 | `Unit/Services/OrderServiceTest` | Pricing and stock rules against mocked repositories |
 

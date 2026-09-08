@@ -221,9 +221,10 @@ paths:
       tags: [Products]
       summary: Delete a product
       description: >-
-        Soft delete, so existing order items keep their reference. Any order still
-        pending or processing on this product is cancelled on the queue, its other
-        items' stock is returned, and the customer is emailed.
+        Soft delete, so existing order items keep their reference. On the queue,
+        this product's line is removed from every order still pending or
+        processing, those orders are re-totalled, and their customers are
+        emailed. An order left with no lines is cancelled.
       responses:
         '200':
           description: Product deleted.

@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Mail;
  * Cancels each one — which returns the rest of its stock — and tells the
  * customer why.
  */
-class CancelOrdersForDeletedProduct implements ShouldQueue
+class HandleDeletedProductOrders implements ShouldQueue
 {
     use Queueable;
 
@@ -44,9 +44,11 @@ class CancelOrdersForDeletedProduct implements ShouldQueue
             ->whereHas('items', fn ($q) => $q->where('product_id', $this->productId))
             ->with(['items', 'user'])
             ->each(function (Order $order) use ($orders, $product): void {
-                $orders->cancelOrder($order);
+                // Only the unavailable line goes; whatever is still for sale
+                // ships as normal, on a re-totalled order.
+                $updated = $orders->removeProductFromOrder($order, $this->productId);
 
-                Mail::to($order->user->email)->send(new OrderCancelledMail($order, $product));
+                Mail::to($order->user->email)->send(new OrderCancelledMail($updated, $product));
             });
     }
 }

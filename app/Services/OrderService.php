@@ -93,6 +93,30 @@ class OrderService
     }
 
     /**
+     * Drops one product's line from an order and re-totals the rest, so the
+     * customer still gets everything that is still for sale. An order left with
+     * no lines at all is cancelled instead.
+     */
+    public function removeProductFromOrder(Order $order, int $productId): Order
+    {
+        return DB::transaction(function () use ($order, $productId): Order {
+            $order->items()->where('product_id', $productId)->delete();
+
+            $order->load('items');
+
+            if ($order->items->isEmpty()) {
+                return $this->orders->updateStatus($order, OrderStatus::Cancelled);
+            }
+
+            $order->update([
+                'total_amount' => $this->sumSubtotals($order->items->pluck('subtotal')->all()),
+            ]);
+
+            return $order->refresh();
+        });
+    }
+
+    /**
      * Verifies that every product exists, is active, and has enough stock.
      *
      * @param  Collection<int, Product>  $products
@@ -141,11 +165,9 @@ class OrderService
     private function buildOrderItems(Collection $products, array $quantities): array
     {
         $items = [];
-        $total = '0.00';
 
         foreach ($quantities as $productId => $quantity) {
             $product = $products->get($productId);
-            $subtotal = bcmul((string) $product->price, (string) $quantity, 2);
 
             $items[] = [
                 'product_id' => $product->id,
@@ -153,12 +175,16 @@ class OrderService
                 'product_name' => $product->name,
                 'unit_price' => $product->price,
                 'quantity' => $quantity,
-                'subtotal' => $subtotal,
+                'subtotal' => bcmul((string) $product->price, (string) $quantity, 2),
             ];
-
-            $total = bcadd($total, $subtotal, 2);
         }
 
-        return [$items, $total];
+        return [$items, $this->sumSubtotals(array_column($items, 'subtotal'))];
+    }
+
+    /** @param array<int, string> $subtotals */
+    private function sumSubtotals(array $subtotals): string
+    {
+        return array_reduce($subtotals, fn (string $t, string $s) => bcadd($t, $s, 2), '0.00');
     }
 }

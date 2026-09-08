@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Enums\OrderStatus;
 use App\Models\Order;
 use App\Models\Product;
 use Illuminate\Bus\Queueable;
@@ -21,8 +22,12 @@ class OrderCancelledMail extends Mailable
 
     public function envelope(): Envelope
     {
+        $cancelled = $this->order->status === OrderStatus::Cancelled;
+
         return new Envelope(
-            subject: "Order cancelled — {$this->order->order_number}",
+            subject: $cancelled
+                ? "Order cancelled — {$this->order->order_number}"
+                : "An item was removed from order {$this->order->order_number}",
         );
     }
 

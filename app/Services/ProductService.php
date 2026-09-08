@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\DataTransferObjects\ProductFilters;
-use App\Jobs\CancelOrdersForDeletedProduct;
+use App\Jobs\HandleDeletedProductOrders;
 use App\Models\Product;
 use App\Models\User;
 use App\Repositories\ProductRepository;
@@ -47,7 +47,7 @@ class ProductService
     {
         $deleted = $this->products->delete($product);
 
-        CancelOrdersForDeletedProduct::dispatch($product->id)->afterCommit();
+        HandleDeletedProductOrders::dispatch($product->id)->afterCommit();
 
         return $deleted;
     }

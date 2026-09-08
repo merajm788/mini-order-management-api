@@ -2,7 +2,7 @@
 
 namespace Tests\Feature\Api;
 
-use App\Jobs\CancelOrdersForDeletedProduct;
+use App\Jobs\HandleDeletedProductOrders;
 use App\Models\Product;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -252,8 +252,8 @@ class ProductTest extends TestCase
             ->assertOk();
 
         Queue::assertPushed(
-            CancelOrdersForDeletedProduct::class,
-            fn (CancelOrdersForDeletedProduct $job) => $job->productId === $product->id,
+            HandleDeletedProductOrders::class,
+            fn (HandleDeletedProductOrders $job) => $job->productId === $product->id,
         );
     }
 
